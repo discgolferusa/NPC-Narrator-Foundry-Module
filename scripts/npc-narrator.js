@@ -550,7 +550,47 @@ async function sendNpcTurn({ text, npcId, visibility }) {
   return data;
 }
 
+/**
+ * Players usually cannot open the Token HUD on unowned NPCs.
+ * Prefer a single targeted token; fall back to controlled / hovered.
+ * @returns {Token|null}
+ */
+function resolveNpcToken() {
+  const targets = [...(game.user.targets || [])].filter((t) => t?.actor);
+  if (targets.length === 1) return targets[0];
+  if (targets.length > 1) {
+    ui.notifications.warn("NPC Narrator: target exactly one NPC token.");
+    return null;
+  }
+
+  const controlled = (canvas.tokens?.controlled || []).filter((t) => t?.actor);
+  if (controlled.length === 1) return controlled[0];
+  if (controlled.length > 1) {
+    ui.notifications.warn("NPC Narrator: select or target exactly one NPC token.");
+    return null;
+  }
+
+  const hover = canvas.tokens?.hover;
+  if (hover?.actor) return hover;
+
+  ui.notifications.warn(
+    "NPC Narrator: target an NPC token first (double-click or use the Target tool). Players usually cannot open the Token HUD on NPCs."
+  );
+  return null;
+}
+
+async function promptMessageForTargetedNpc(visibility) {
+  const token = resolveNpcToken();
+  if (!token) return;
+  await promptMessage(token, visibility);
+}
+
 async function promptMessage(token, visibility) {
+  if (!token?.actor) {
+    ui.notifications.warn("NPC Narrator: that token has no actor.");
+    return;
+  }
+
   const npcId = resolveNpcIdForToken(token);
   const npcName = token?.name || token?.actor?.name || "NPC";
   const title = visibility === "whisper" ? `Whisper to ${npcName}` : `Chat with ${npcName}`;
@@ -564,7 +604,13 @@ async function promptMessage(token, visibility) {
   if (!resolvedNpcId && game.user.isGM) {
     resolvedNpcId = await pickNpcId(npcName);
     if (!resolvedNpcId) return;
-    if (token.actor) await setNpcOverride(token.actor.id, resolvedNpcId);
+    if (token.actor) {
+      try {
+        await setNpcOverride(token.actor.id, resolvedNpcId);
+      } catch (err) {
+        console.warn(`${MODULE_ID} could not save NPC override`, err);
+      }
+    }
   }
 
   const content = `
@@ -604,6 +650,98 @@ async function promptMessage(token, visibility) {
     ui.notifications.info("NPC Narrator: message sent.");
   } catch (err) {
     ui.notifications.error(err.message || String(err));
+  }
+}
+
+function tokenFromContextApplication(application, li) {
+  const doc =
+    application?.document ||
+    application?.placeable?.document ||
+    application?.object?.document ||
+    null;
+  if (doc?.object) return doc.object;
+  if (doc?.id && canvas.tokens?.get) {
+    const t = canvas.tokens.get(doc.id);
+    if (t) return t;
+  }
+  const tokenId =
+    li?.dataset?.documentId ||
+    li?.dataset?.tokenId ||
+    li?.[0]?.dataset?.documentId ||
+    li?.[0]?.dataset?.tokenId;
+  if (tokenId && canvas.tokens?.get) return canvas.tokens.get(tokenId);
+  return canvas.tokens?.hover || null;
+}
+
+function addTokenNarratorContextOptions(application, menuItems) {
+  menuItems.push(
+    {
+      name: "NPC Narrator: Chat",
+      icon: '<i class="fas fa-comments"></i>',
+      callback: (li) => {
+        const token = tokenFromContextApplication(application, li);
+        if (token) void promptMessage(token, "chat");
+        else void promptMessageForTargetedNpc("chat");
+      },
+    },
+    {
+      name: "NPC Narrator: Whisper",
+      icon: '<i class="fas fa-user-secret"></i>',
+      callback: (li) => {
+        const token = tokenFromContextApplication(application, li);
+        if (token) void promptMessage(token, "whisper");
+        else void promptMessageForTargetedNpc("whisper");
+      },
+    }
+  );
+}
+
+/** Token layer tools for players who cannot open the NPC Token HUD. */
+function registerTokenLayerNarratorTools(controls) {
+  const makeTool = (name, title, icon, visibility) => ({
+    name,
+    title,
+    icon,
+    button: true,
+    order: visibility === "chat" ? 90 : 91,
+    onChange: (_event, active) => {
+      if (active) void promptMessageForTargetedNpc(visibility);
+    },
+    onClick: () => void promptMessageForTargetedNpc(visibility),
+  });
+
+  const chatTool = makeTool(
+    "npc-narrator-chat",
+    "NPC Narrator: Chat with targeted NPC",
+    "fas fa-comments",
+    "chat"
+  );
+  const whisperTool = makeTool(
+    "npc-narrator-whisper",
+    "NPC Narrator: Whisper to targeted NPC",
+    "fas fa-user-secret",
+    "whisper"
+  );
+
+  // Foundry v13+ scene controls may be a record keyed by control name.
+  if (controls && !Array.isArray(controls)) {
+    const tokenControl = controls.tokens || controls.token;
+    if (!tokenControl) return;
+    tokenControl.tools = tokenControl.tools || {};
+    if (Array.isArray(tokenControl.tools)) {
+      tokenControl.tools.push(chatTool, whisperTool);
+    } else {
+      tokenControl.tools[chatTool.name] = chatTool;
+      tokenControl.tools[whisperTool.name] = whisperTool;
+    }
+    return;
+  }
+
+  if (Array.isArray(controls)) {
+    const tokenControl = controls.find((c) => c.name === "token" || c.name === "tokens");
+    if (!tokenControl) return;
+    if (!Array.isArray(tokenControl.tools)) tokenControl.tools = [];
+    tokenControl.tools.push(chatTool, whisperTool);
   }
 }
 
@@ -974,6 +1112,26 @@ Hooks.once("init", () => {
     type: Object,
     default: {},
   });
+
+  game.keybindings.register(MODULE_ID, "chatTargetedNpc", {
+    name: "Chat with targeted NPC",
+    hint: "Opens Chat for the NPC token you have targeted (players usually cannot open the Token HUD on NPCs).",
+    editable: [{ key: "KeyC", modifiers: ["Alt"] }],
+    onDown: () => {
+      void promptMessageForTargetedNpc("chat");
+      return true;
+    },
+  });
+
+  game.keybindings.register(MODULE_ID, "whisperTargetedNpc", {
+    name: "Whisper to targeted NPC",
+    hint: "Opens Whisper for the NPC token you have targeted.",
+    editable: [{ key: "KeyW", modifiers: ["Alt"] }],
+    onDown: () => {
+      void promptMessageForTargetedNpc("whisper");
+      return true;
+    },
+  });
 });
 
 Hooks.once("ready", async () => {
@@ -982,6 +1140,8 @@ Hooks.once("ready", async () => {
     bind: openBindDialog,
     mapCharacter: openCharacterMapping,
     mapActor: openActorNarratorMapping,
+    chat: () => promptMessageForTargetedNpc("chat"),
+    whisper: () => promptMessageForTargetedNpc("whisper"),
     refresh: refreshCatalogs,
     unbind: unbindSession,
   };
@@ -1056,9 +1216,22 @@ Hooks.on("renderTokenHUD", (hud, html) => {
   col.append(chatBtn, whisperBtn);
 });
 
+// Players rarely get Token HUD on unowned NPCs — offer canvas context options when available.
+Hooks.on("getTokenPlaceableContextOptions", (application, menuItems) => {
+  addTokenNarratorContextOptions(application, menuItems);
+});
+Hooks.on("getTokenContextOptions", (application, menuItems) => {
+  addTokenNarratorContextOptions(application, menuItems);
+});
+
+// Token layer buttons: target an NPC, then click Chat/Whisper in the left toolbar.
+Hooks.on("getSceneControlButtons", (controls) => {
+  registerTokenLayerNarratorTools(controls);
+});
+
 Hooks.on("chatMessage", (_log, message) => {
   if (!message.startsWith("/narrator")) return true;
-  const parts = message.split(/\s+/);
+  const parts = message.trim().split(/\s+/);
   const cmd = parts[1];
   if (cmd === "bind" && game.user.isGM) {
     openBindDialog();
@@ -1066,6 +1239,10 @@ Hooks.on("chatMessage", (_log, message) => {
   }
   if (cmd === "character") {
     openCharacterMapping();
+    return false;
+  }
+  if (cmd === "chat" || cmd === "whisper") {
+    void promptMessageForTargetedNpc(cmd);
     return false;
   }
   if (cmd === "status") {

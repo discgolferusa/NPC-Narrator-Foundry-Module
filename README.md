@@ -33,7 +33,19 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 
 - Open your character sheet → **NPC Narrator** header button → choose party member
 - Or `/narrator character` (uses assigned character / selected token)
-- Select an NPC token → Token HUD chat / whisper icons
+
+## Talking to NPCs (players)
+
+Players usually **cannot** open the Token HUD on NPC tokens they do not own. Use targeting instead:
+
+1. **Target** the NPC token (Target tool, or double-click / `T` while hovering — depending on your Foundry version).
+2. Then either:
+   - Click **Chat** / **Whisper** tools on the left **Token** scene controls toolbar
+   - Type `/narrator chat` or `/narrator whisper`
+   - Press **Alt+C** (chat) or **Alt+W** (whisper) — remappable in Configure Controls
+   - Or `game.npcNarrator.chat()` / `game.npcNarrator.whisper()` from a macro
+
+GMs who can open the Token HUD still get the chat/whisper icons there.
 
 ## Chat commands
 
@@ -41,6 +53,8 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 |---------|-----|--------|
 | `/narrator bind` | GM | Open bind dialog |
 | `/narrator character` | Anyone | Map assigned/selected actor |
+| `/narrator chat` | Anyone | Chat with targeted NPC |
+| `/narrator whisper` | Anyone | Whisper to targeted NPC |
 | `/narrator status` | Anyone | Show bind status |
 
 ## Mapping storage (copy-safe)
