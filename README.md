@@ -45,10 +45,11 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 
 ## Mapping storage (copy-safe)
 
-| Map | Setting key | Behavior on actor duplicate |
-|-----|-------------|-----------------------------|
-| Party member | `partyMaps[actorId]` | New actor id → blank |
-| Narrator NPC | `npcOverrides[actorId]` | New actor id → blank |
+| Map | Storage | Behavior on actor duplicate |
+|-----|---------|-----------------------------|
+| Party member (GM) | world `partyMaps[actorId]` | New actor id → blank |
+| Party member (player) | user flag `partyMaps[actorId]` | New actor id → blank |
+| Narrator NPC | world `npcOverrides[actorId]` (GM only) | New actor id → blank |
 
 API: `game.npcNarrator.mapActor(actor)`
 

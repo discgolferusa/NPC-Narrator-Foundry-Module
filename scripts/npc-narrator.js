@@ -196,12 +196,39 @@ function getPartyMaps() {
   return game.settings.get(MODULE_ID, "partyMaps") || {};
 }
 
+/** Player-writable actor → party maps (world settings require GM). */
+function getUserPartyMaps() {
+  return game.user.getFlag(FLAG_SCOPE, "partyMaps") || {};
+}
+
 async function setPartyMap(actorId, playerId) {
   if (!actorId) return;
+  if (!game.user.isGM) {
+    throw new Error("Only a GM can write world party maps.");
+  }
   const map = { ...getPartyMaps() };
   if (!playerId) delete map[actorId];
   else map[actorId] = playerId;
   await game.settings.set(MODULE_ID, "partyMaps", map);
+}
+
+async function setUserPartyMap(actorId, playerId) {
+  if (!actorId) return;
+  const map = { ...getUserPartyMaps() };
+  if (!playerId) delete map[actorId];
+  else map[actorId] = playerId;
+  await game.user.setFlag(FLAG_SCOPE, "partyMaps", map);
+}
+
+/**
+ * Persist party mapping: GM → world setting; players → user flag (same actor-id keying).
+ */
+async function savePartyMap(actorId, playerId) {
+  if (game.user.isGM) await setPartyMap(actorId, playerId);
+  else await setUserPartyMap(actorId, playerId);
+  if (game.user.character?.id === actorId) {
+    await setPlayerMapping(playerId || null);
+  }
 }
 
 /** @deprecated Legacy per-user fallback; prefer partyMaps[actorId]. */
@@ -209,7 +236,7 @@ function getPlayerMapping() {
   return game.user.getFlag(FLAG_SCOPE, "playerId") || null;
 }
 
-/** @deprecated Legacy per-user fallback; prefer setPartyMap. */
+/** @deprecated Legacy per-user fallback; prefer savePartyMap. */
 async function setPlayerMapping(playerId) {
   await game.user.setFlag(FLAG_SCOPE, "playerId", playerId || null);
 }
@@ -220,6 +247,9 @@ function getNpcOverrides() {
 
 async function setNpcOverride(actorId, npcId) {
   if (!actorId) return;
+  if (!game.user.isGM) {
+    throw new Error("Only a GM can write Narrator NPC maps.");
+  }
   const map = { ...getNpcOverrides() };
   if (!npcId) delete map[actorId];
   else map[actorId] = npcId;
@@ -240,14 +270,18 @@ function guessNpcId(actor) {
 
 /**
  * Resolve Narrator party member for an Actor.
- * Uses world partyMaps[actorId] (blank on actor copy), then legacy user flag, then name match.
+ * World partyMaps (GM) → user partyMaps[actorId] → legacy user flag → name match.
+ * Actor-id keys mean duplicated actors start unmapped.
  */
 function resolvePlayerIdForActor(actor) {
   if (!actor) return null;
   const mapped = getPartyMaps()[actor.id];
   if (mapped) return mapped;
 
-  // Legacy: user-level mapping only when this is the user's assigned character.
+  const userMapped = getUserPartyMaps()[actor.id];
+  if (userMapped) return userMapped;
+
+  // Legacy: single user flag when this is the user's assigned character.
   if (game.user.character?.id === actor.id) {
     const legacy = getPlayerMapping();
     if (legacy) return legacy;
@@ -622,6 +656,7 @@ async function openActorNarratorMapping(actor) {
   const npcs = npcsCache || [];
   const currentPlayer =
     getPartyMaps()[actor.id] ||
+    getUserPartyMaps()[actor.id] ||
     (game.user.character?.id === actor.id ? getPlayerMapping() : null) ||
     guessPartyPlayerId(actor) ||
     "";
@@ -647,16 +682,19 @@ async function openActorNarratorMapping(actor) {
 
   const canEditParty = actor.isOwner || game.user.isGM;
   const canEditNpc = game.user.isGM;
+  const partyStoreNote = game.user.isGM
+    ? "Stored in world settings by actor id (copies start unmapped)."
+    : "Stored on your user by actor id (copies start unmapped). GMs can also set a world map.";
 
   const content = `
     <div class="npc-narrator-dialog">
-      <p>Mappings are stored by actor id in world settings. Duplicating this actor creates a new id, so copies start <strong>unmapped</strong>.</p>
+      <p>Mappings are keyed by actor id. Duplicating this actor creates a new id, so copies start <strong>unmapped</strong>.</p>
       <p><strong>Actor:</strong> ${actor.name.replace(/</g, "&lt;")}</p>
       ${canEditParty ? `
       <div class="form-group">
         <label>Party member (who speaks)</label>
         <select id="npc-narrator-party-map">${partyOptions}</select>
-        <p class="notes">Used when you Chat/Whisper from this character.</p>
+        <p class="notes">${partyStoreNote}</p>
       </div>` : ""}
       ${canEditNpc ? `
       <div class="form-group">
@@ -678,11 +716,7 @@ async function openActorNarratorMapping(actor) {
           try {
             if (canEditParty) {
               const partyId = String(html.find("#npc-narrator-party-map").val() || "").trim();
-              await setPartyMap(actor.id, partyId || null);
-              // Keep legacy user flag in sync when mapping the assigned character.
-              if (game.user.character?.id === actor.id) {
-                await setPlayerMapping(partyId || null);
-              }
+              await savePartyMap(actor.id, partyId || null);
             }
             if (canEditNpc) {
               const npcId = String(html.find("#npc-narrator-npc-map").val() || "").trim();
@@ -963,13 +997,19 @@ Hooks.once("ready", async () => {
     }
   }
 
-  // Migrate legacy user flag → partyMaps for the assigned character when missing.
+  // Migrate legacy user flag / name guess → actor-id map (GM: world; players: user flag).
   const assigned = game.user.character;
   if (assigned && partyCharactersCache?.length) {
-    const existing = getPartyMaps()[assigned.id];
+    const existing = getPartyMaps()[assigned.id] || getUserPartyMaps()[assigned.id];
     if (!existing) {
       const legacy = getPlayerMapping() || guessPartyPlayerId(assigned);
-      if (legacy) await setPartyMap(assigned.id, legacy);
+      if (legacy) {
+        try {
+          await savePartyMap(assigned.id, legacy);
+        } catch (err) {
+          console.warn(`${MODULE_ID} party map migrate skipped`, err);
+        }
+      }
     }
   }
 });
