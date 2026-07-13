@@ -318,37 +318,84 @@ function whisperTargets(foundryUserId) {
   return [...ids];
 }
 
-async function postChatLine({ content, alias, role, visibility, foundryUserId }) {
+function chatAlreadyPosted(requestId, role) {
+  if (!requestId || !role || !game.messages) return false;
+  return game.messages.contents.some(
+    (m) => m.getFlag?.(MODULE_ID, "requestId") === requestId && m.getFlag?.(MODULE_ID, "role") === role
+  );
+}
+
+async function postChatLine({ content, alias, role, visibility, foundryUserId, requestId }) {
   if (!content?.trim()) return;
+  if (requestId && role && chatAlreadyPosted(requestId, role)) return;
 
   const isWhisper = visibility === "whisper";
   const data = {
     content: content.trim(),
     speaker: { alias: alias || (role === "narrator" ? "Narrator" : "NPC") },
-    type: CONST.CHAT_MESSAGE_TYPES?.OTHER ?? 0,
+    flags: {
+      [MODULE_ID]: {
+        role: role || "other",
+        requestId: requestId || null,
+      },
+    },
   };
 
-  if (role === "narrator") {
-    data.flags = { [MODULE_ID]: { role: "narrator" } };
-  }
+  const style = CONST.CHAT_MESSAGE_STYLES?.OTHER ?? CONST.CHAT_MESSAGE_STYLES?.IC;
+  if (style !== undefined) data.style = style;
+
+  // Foundry v13+: `type` is a document subtype string. Never pass numeric CHAT_MESSAGE_TYPES
+  // (that became "0" and breaks systems like Torg). Omit type and let the system default.
 
   if (isWhisper) {
     data.whisper = whisperTargets(foundryUserId);
   }
 
-  // Prefer create with speaker alias; fall back to GM attribution for narration if needed.
   try {
     await ChatMessage.create(data);
   } catch (err) {
     console.warn(`${MODULE_ID} chat create failed`, err);
-    if (role === "narrator") {
-      const gm = game.users.find((u) => u.isGM);
-      await ChatMessage.create({
-        ...data,
-        speaker: ChatMessage.getSpeaker({ user: gm || game.user }),
-        content: `<em>[Narrator]</em> ${content.trim()}`,
-      });
-    }
+    // Retry without type/style in case the system rejects our choices.
+    const fallback = {
+      content: data.content,
+      speaker: data.speaker,
+      flags: data.flags,
+    };
+    if (isWhisper) fallback.whisper = data.whisper;
+    await ChatMessage.create(fallback);
+  }
+}
+
+/**
+ * Post narration/NPC dialogue from an /npc-turn JSON body into Foundry chat.
+ * Works even when campaign text policy is not pointed at the Foundry device.
+ */
+async function postTurnRepliesToChat(data, visibility, foundryUserId, requestId) {
+  if (!data || typeof data !== "object") return;
+  const rid = requestId || data.request_id || null;
+  const narration = String(data.narration_text || "").trim();
+  const dialogue = String(data.dialogue_text || data.npc_text || "").trim();
+  const npcName = String(data.npc_name || "NPC").trim() || "NPC";
+
+  if (narration) {
+    await postChatLine({
+      content: narration,
+      alias: "Narrator",
+      role: "narrator",
+      visibility,
+      foundryUserId,
+      requestId: rid,
+    });
+  }
+  if (dialogue) {
+    await postChatLine({
+      content: dialogue,
+      alias: npcName,
+      role: "npc",
+      visibility,
+      foundryUserId,
+      requestId: rid,
+    });
   }
 }
 
@@ -356,13 +403,14 @@ async function handleCampaignText(payload) {
   if (!payload) return;
   const visibility = payload.visibility || "chat";
   const foundryUserId = payload.foundry_user_id || null;
+  const requestId = payload.request_id || null;
 
   if (visibility === "whisper" && foundryUserId && foundryUserId !== game.user.id && !game.user.isGM) {
     return;
   }
 
   if (payload.role === "player" && payload.player_text) {
-    // Outgoing player lines are echoed by the local turn poster for chat mode.
+    // Outgoing player lines are posted by the local turn sender into Foundry chat.
     return;
   }
 
@@ -373,6 +421,7 @@ async function handleCampaignText(payload) {
       role: "narrator",
       visibility,
       foundryUserId,
+      requestId,
     });
     return;
   }
@@ -384,6 +433,7 @@ async function handleCampaignText(payload) {
       role: "npc",
       visibility,
       foundryUserId,
+      requestId,
     });
     return;
   }
@@ -396,6 +446,7 @@ async function handleCampaignText(payload) {
       role: "narrator",
       visibility,
       foundryUserId,
+      requestId,
     });
   }
   if (payload.dialogue_text) {
@@ -405,6 +456,7 @@ async function handleCampaignText(payload) {
       role: "npc",
       visibility,
       foundryUserId,
+      requestId,
     });
   } else if (payload.npc_text && !payload.narration_text) {
     await postChatLine({
@@ -413,6 +465,7 @@ async function handleCampaignText(payload) {
       role: "npc",
       visibility,
       foundryUserId,
+      requestId,
     });
   }
 }
@@ -530,22 +583,16 @@ async function sendNpcTurn({ text, npcId, visibility }) {
     throw new Error(data?.error || `NPC turn failed (${response.status})`);
   }
 
-  if (visibility === "chat") {
-    await postChatLine({
-      content: text,
-      alias: game.user.character?.name || game.user.name,
-      role: "player",
-      visibility: "chat",
-    });
-  } else {
-    await postChatLine({
-      content: text,
-      alias: game.user.character?.name || game.user.name,
-      role: "player",
-      visibility: "whisper",
-      foundryUserId: game.user.id,
-    });
-  }
+  // Always post into Foundry chat so everyone sees public turns (and whispers stay private).
+  await postChatLine({
+    content: text,
+    alias: game.user.character?.name || game.user.name,
+    role: "player",
+    visibility,
+    foundryUserId: game.user.id,
+    requestId,
+  });
+  await postTurnRepliesToChat(data, visibility, game.user.id, requestId);
 
   return data;
 }
@@ -618,39 +665,112 @@ async function promptMessage(token, visibility) {
       <p class="npc-narrator-status">${resolvedNpcId ? `NPC: <code>${resolvedNpcId}</code>` : ""}</p>
       <div class="form-group">
         <label>Message</label>
-        <textarea id="npc-narrator-text" rows="4" style="width:100%"></textarea>
+        <textarea name="message" id="npc-narrator-text" rows="4" style="width:100%"></textarea>
       </div>
     </div>`;
 
-  const result = await new Promise((resolve) => {
-    new Dialog({
-      title,
-      content,
-      buttons: {
-        send: {
-          icon: '<i class="fas fa-paper-plane"></i>',
-          label: "Send",
-          callback: (html) => {
-            const text = html.find("#npc-narrator-text").val();
-            resolve(String(text || "").trim());
-          },
-        },
-        cancel: {
-          label: "Cancel",
-          callback: () => resolve(null),
+  const result = await dialogWait({
+    title,
+    content,
+    buttons: [
+      {
+        action: "send",
+        label: "Send",
+        icon: "fas fa-paper-plane",
+        default: true,
+        callback: (_event, button) => {
+          const el =
+            button.form?.elements?.message ||
+            button.form?.querySelector?.("#npc-narrator-text, textarea[name='message']");
+          return String(el?.value || "").trim();
         },
       },
-      default: "send",
-    }).render(true);
+      { action: "cancel", label: "Cancel" },
+    ],
   });
 
-  if (!result) return;
+  if (!result || result === "cancel") return;
+  const text = typeof result === "string" ? result : "";
+  if (!text) return;
   try {
-    await sendNpcTurn({ text: result, npcId: resolvedNpcId, visibility });
+    await sendNpcTurn({ text, npcId: resolvedNpcId, visibility });
     ui.notifications.info("NPC Narrator: message sent.");
   } catch (err) {
     ui.notifications.error(err.message || String(err));
   }
+}
+
+function getDialogV2() {
+  return foundry?.applications?.api?.DialogV2 || null;
+}
+
+/**
+ * Prefer ApplicationV2 DialogV2; fall back to V1 Dialog on older clients.
+ * @returns {Promise<any>}
+ */
+async function dialogWait({ title, content, buttons }) {
+  const DialogV2 = getDialogV2();
+  if (DialogV2?.wait) {
+    try {
+      return await DialogV2.wait({
+        window: { title },
+        content,
+        modal: true,
+        rejectClose: false,
+        buttons,
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  // V1 fallback
+  return new Promise((resolve) => {
+    const v1Buttons = {};
+    for (const b of buttons || []) {
+      v1Buttons[b.action] = {
+        icon: b.icon ? `<i class="${b.icon}"></i>` : undefined,
+        label: b.label,
+        callback: (html) => {
+          if (typeof b.callback === "function") {
+            const root = html?.[0] || html;
+            const form = {
+              elements: {
+                message: root?.querySelector?.("[name='message'], #npc-narrator-text"),
+                npc: root?.querySelector?.("#npc-narrator-npc, [name='npc']"),
+                party: root?.querySelector?.("#npc-narrator-party-map, [name='party']"),
+                npcMap: root?.querySelector?.("#npc-narrator-npc-map, [name='npcMap']"),
+                editorUrl: root?.querySelector?.("#npc-narrator-url, [name='editorUrl']"),
+                pairingCode: root?.querySelector?.("#npc-narrator-pairing, [name='pairingCode']"),
+              },
+              querySelector: (sel) => root?.querySelector?.(sel),
+            };
+            // Prefer jQuery find when available
+            if (html?.find) {
+              form.elements.message = html.find("#npc-narrator-text, [name='message']")[0] || form.elements.message;
+              form.elements.npc = html.find("#npc-narrator-npc")[0] || form.elements.npc;
+              form.elements.party = html.find("#npc-narrator-party-map")[0] || form.elements.party;
+              form.elements.npcMap = html.find("#npc-narrator-npc-map")[0] || form.elements.npcMap;
+              form.elements.editorUrl = html.find("#npc-narrator-url")[0] || form.elements.editorUrl;
+              form.elements.pairingCode = html.find("#npc-narrator-pairing")[0] || form.elements.pairingCode;
+              form.querySelector = (sel) => html.find(sel)[0];
+            }
+            resolve(b.callback(null, { form }));
+            return;
+          }
+          resolve(b.action);
+        },
+      };
+    }
+    const defaultBtn = (buttons || []).find((b) => b.default)?.action || Object.keys(v1Buttons)[0];
+    new Dialog({
+      title,
+      content,
+      buttons: v1Buttons,
+      default: defaultBtn,
+      close: () => resolve(null),
+    }).render(true);
+  });
 }
 
 function tokenFromContextApplication(application, li) {
@@ -928,31 +1048,35 @@ function installPlayerTokenRightClickMenu() {
 
 async function pickNpcId(hintName) {
   await refreshCatalogs();
-  const options = (npcsCache || [])
-    .map((n) => `<option value="${n.id}">${n.name} (${n.id})</option>`)
-    .join("");
-  if (!options) {
+  if (!npcsCache?.length) {
     ui.notifications.error("No NPCs available from NPC Narrator.");
     return null;
   }
   const match = bestNameMatch(hintName, npcsCache, "name");
-  return new Promise((resolve) => {
-    new Dialog({
-      title: "Select NPC Narrator record",
-      content: `<div class="form-group"><label>NPC</label><select id="npc-narrator-npc">${options}</select></div>`,
-      buttons: {
-        ok: {
-          label: "Use",
-          callback: (html) => resolve(html.find("#npc-narrator-npc").val()),
+  const npcOptionsHtml = npcsCache
+    .map((n) => {
+      const sel = n.id === match?.id ? " selected" : "";
+      return `<option value="${n.id}"${sel}>${n.name} (${n.id})</option>`;
+    })
+    .join("");
+  const result = await dialogWait({
+    title: "Select NPC Narrator record",
+    content: `<div class="form-group"><label>NPC</label><select name="npc" id="npc-narrator-npc">${npcOptionsHtml}</select></div>`,
+    buttons: [
+      {
+        action: "ok",
+        label: "Use",
+        default: true,
+        callback: (_event, button) => {
+          const el = button.form?.elements?.npc || button.form?.querySelector?.("#npc-narrator-npc");
+          return el?.value || null;
         },
-        cancel: { label: "Cancel", callback: () => resolve(null) },
       },
-      default: "ok",
-      render: (html) => {
-        if (match?.id) html.find("#npc-narrator-npc").val(match.id);
-      },
-    }).render(true);
+      { action: "cancel", label: "Cancel" },
+    ],
   });
+  if (!result || result === "cancel") return null;
+  return String(result);
 }
 
 async function openActorNarratorMapping(actor) {
@@ -1012,46 +1136,55 @@ async function openActorNarratorMapping(actor) {
       ${canEditParty ? `
       <div class="form-group">
         <label>Party member (who speaks)</label>
-        <select id="npc-narrator-party-map">${partyOptions}</select>
+        <select name="party" id="npc-narrator-party-map">${partyOptions}</select>
         <p class="notes">${partyStoreNote}</p>
       </div>` : ""}
       ${canEditNpc ? `
       <div class="form-group">
         <label>Narrator NPC (token target)</label>
-        <select id="npc-narrator-npc-map">${npcOptions}</select>
+        <select name="npcMap" id="npc-narrator-npc-map">${npcOptions}</select>
         <p class="notes">Used when chatting with this actor’s token. Leave blank to rely on name match.</p>
       </div>` : `
       <p class="notes">Ask a GM to map Narrator NPC targets.</p>`}
     </div>`;
 
-  new Dialog({
+  const result = await dialogWait({
     title: "NPC Narrator — Actor mapping",
     content,
-    buttons: {
-      save: {
-        icon: '<i class="fas fa-save"></i>',
+    buttons: [
+      {
+        action: "save",
         label: "Save",
-        callback: async (html) => {
-          try {
-            if (canEditParty) {
-              const partyId = String(html.find("#npc-narrator-party-map").val() || "").trim();
-              await savePartyMap(actor.id, partyId || null);
-            }
-            if (canEditNpc) {
-              const npcId = String(html.find("#npc-narrator-npc-map").val() || "").trim();
-              await setNpcOverride(actor.id, npcId || null);
-            }
-            ui.notifications.info(`NPC Narrator mapping saved for ${actor.name}.`);
-          } catch (err) {
-            console.error(`${MODULE_ID} actor mapping failed`, err);
-            ui.notifications.error(err.message || String(err));
-          }
+        icon: "fas fa-save",
+        default: true,
+        callback: (_event, button) => {
+          const partyEl =
+            button.form?.elements?.party || button.form?.querySelector?.("#npc-narrator-party-map");
+          const npcEl =
+            button.form?.elements?.npcMap || button.form?.querySelector?.("#npc-narrator-npc-map");
+          return {
+            partyId: String(partyEl?.value || "").trim(),
+            npcId: String(npcEl?.value || "").trim(),
+          };
         },
       },
-      cancel: { label: "Cancel" },
-    },
-    default: "save",
-  }).render(true);
+      { action: "cancel", label: "Cancel" },
+    ],
+  });
+
+  if (!result || result === "cancel" || typeof result !== "object") return;
+  try {
+    if (canEditParty) {
+      await savePartyMap(actor.id, result.partyId || null);
+    }
+    if (canEditNpc) {
+      await setNpcOverride(actor.id, result.npcId || null);
+    }
+    ui.notifications.info(`NPC Narrator mapping saved for ${actor.name}.`);
+  } catch (err) {
+    console.error(`${MODULE_ID} actor mapping failed`, err);
+    ui.notifications.error(err.message || String(err));
+  }
 }
 
 async function openCharacterMapping() {
@@ -1099,7 +1232,7 @@ async function openBindDialog() {
   const currentUrl = editorBaseUrl();
   const currentCode = savedPairingCode();
 
-  new Dialog({
+  const result = await dialogWait({
     title: "NPC Narrator — Bind world",
     content: `
       <div class="npc-narrator-dialog">
@@ -1107,47 +1240,64 @@ async function openBindDialog() {
         <p>Uses the Yaml Editor URL and pairing code from module settings (you can edit them here).</p>
         <div class="form-group">
           <label>Yaml Editor base URL</label>
-          <input type="text" id="npc-narrator-url" style="width:100%" value="${currentUrl.replace(/"/g, "&quot;")}" placeholder="https://editor.example.com" />
+          <input type="text" name="editorUrl" id="npc-narrator-url" style="width:100%" value="${currentUrl.replace(/"/g, "&quot;")}" placeholder="https://editor.example.com" />
         </div>
         <div class="form-group">
           <label>Pairing code</label>
-          <input type="text" id="npc-narrator-pairing" style="width:100%" value="${currentCode.replace(/"/g, "&quot;")}" placeholder="Paste pairing code" autocomplete="off" />
+          <input type="text" name="pairingCode" id="npc-narrator-pairing" style="width:100%" value="${currentCode.replace(/"/g, "&quot;")}" placeholder="Paste pairing code" autocomplete="off" />
         </div>
       </div>`,
-    buttons: {
-      bind: {
-        icon: '<i class="fas fa-link"></i>',
+    buttons: [
+      {
+        action: "bind",
         label: "Bind",
-        callback: async (html) => {
-          const url = String(html.find("#npc-narrator-url").val() || "").trim().replace(/\/+$/, "");
-          const code = String(html.find("#npc-narrator-pairing").val() || "").trim() || savedPairingCode();
-          if (!url) {
-            ui.notifications.error("Set the Yaml Editor base URL first.");
-            return;
-          }
-          if (!code) {
-            ui.notifications.error("Paste a pairing code in settings or this dialog.");
-            return;
-          }
-          try {
-            await bindWithPairingCode(code, { baseUrl: url, persistUrl: true });
-            ui.notifications.info("NPC Narrator: world bound.");
-          } catch (err) {
-            console.error(`${MODULE_ID} bind failed`, err);
-            ui.notifications.error(err.message || String(err));
-          }
+        icon: "fas fa-link",
+        default: true,
+        callback: (_event, button) => {
+          const urlEl =
+            button.form?.elements?.editorUrl || button.form?.querySelector?.("#npc-narrator-url");
+          const codeEl =
+            button.form?.elements?.pairingCode || button.form?.querySelector?.("#npc-narrator-pairing");
+          return {
+            action: "bind",
+            url: String(urlEl?.value || "").trim().replace(/\/+$/, ""),
+            code: String(codeEl?.value || "").trim() || savedPairingCode(),
+          };
         },
       },
-      unbind: {
+      {
+        action: "unbind",
         label: "Unbind",
-        callback: async () => {
-          await unbindSession();
-        },
+        callback: () => ({ action: "unbind" }),
       },
-      cancel: { label: "Close" },
-    },
-    default: "bind",
-  }).render(true);
+      { action: "cancel", label: "Close" },
+    ],
+  });
+
+  if (!result || result === "cancel") return;
+  if (result === "unbind" || result?.action === "unbind") {
+    await unbindSession();
+    return;
+  }
+  if (result?.action === "bind" || typeof result === "object") {
+    const url = result.url;
+    const code = result.code;
+    if (!url) {
+      ui.notifications.error("Set the Yaml Editor base URL first.");
+      return;
+    }
+    if (!code) {
+      ui.notifications.error("Paste a pairing code in settings or this dialog.");
+      return;
+    }
+    try {
+      await bindWithPairingCode(code, { baseUrl: url, persistUrl: true });
+      ui.notifications.info("NPC Narrator: world bound.");
+    } catch (err) {
+      console.error(`${MODULE_ID} bind failed`, err);
+      ui.notifications.error(err.message || String(err));
+    }
+  }
 }
 
 /**

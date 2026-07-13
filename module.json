@@ -2,7 +2,7 @@
   "id": "npc-narrator",
   "title": "NPC Narrator",
   "description": "Link a Foundry world to an NPC Narrator campaign. Chat or whisper to NPCs from tokens; replies appear as Narrator and NPC chat lines. TTS follows the GM's audio recipient (e.g. Discord).",
-    "version": "0.1.7",
+    "version": "0.1.8",
   "compatibility": {
     "minimum": "13",
     "verified": "14"

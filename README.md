@@ -41,6 +41,8 @@ Foundry does **not** open the Token HUD (or any context menu) when a player righ
 1. **Hover** the NPC token (targeting alone is optional).
 2. **Right-click** → **Chat** or **Whisper**.
 
+**Chat** posts the player line and Narrator/NPC replies into the **global Foundry chat log**. **Whisper** is private to the sender and GMs.
+
 Also available:
 - `/narrator chat` / `/narrator whisper` (uses targeted / hovered token)
 - **Alt+C** / **Alt+W** (Configure Controls)
