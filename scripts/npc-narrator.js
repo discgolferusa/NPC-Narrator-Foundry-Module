@@ -330,8 +330,14 @@ async function postChatLine({ content, alias, role, visibility, foundryUserId, r
   if (requestId && role && chatAlreadyPosted(requestId, role)) return;
 
   const isWhisper = visibility === "whisper";
+  let body = content.trim();
+  if (role === "narrator") {
+    // Narration reads as stage direction in chat.
+    body = `<em class="npc-narrator-narration">${body}</em>`;
+  }
+
   const data = {
-    content: content.trim(),
+    content: body,
     speaker: { alias: alias || (role === "narrator" ? "Narrator" : "NPC") },
     flags: {
       [MODULE_ID]: {
