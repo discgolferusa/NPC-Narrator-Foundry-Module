@@ -745,6 +745,187 @@ function registerTokenLayerNarratorTools(controls) {
   }
 }
 
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function eventClientPoint(event) {
+  const oe = event?.originalEvent || event?.data?.originalEvent || event;
+  return {
+    clientX: Number(oe?.clientX ?? event?.clientX ?? 0),
+    clientY: Number(oe?.clientY ?? event?.clientY ?? 0),
+  };
+}
+
+function tokenCanOpenHud(token, event) {
+  if (!token) return false;
+  if (typeof token._canHUD === "function") {
+    try {
+      return Boolean(token._canHUD(game.user, event));
+    } catch {
+      /* fall through */
+    }
+  }
+  return Boolean(token.isOwner);
+}
+
+/**
+ * Foundry does not show Token HUD or a context menu for unowned tokens.
+ * Players need our own right-click menu to Chat/Whisper NPCs.
+ */
+function shouldShowPlayerTokenContextMenu(token, event) {
+  return Boolean(token?.actor && !tokenCanOpenHud(token, event));
+}
+
+let _npcNarratorMenuOpenedAt = 0;
+let _npcNarratorMenuCloser = null;
+
+function closeNpcNarratorTokenContextMenu() {
+  document.getElementById("npc-narrator-token-context")?.remove();
+  if (_npcNarratorMenuCloser) {
+    document.removeEventListener("pointerdown", _npcNarratorMenuCloser, true);
+    document.removeEventListener("keydown", _npcNarratorMenuCloser, true);
+    _npcNarratorMenuCloser = null;
+  }
+}
+
+function showNpcNarratorTokenContextMenu(token, event) {
+  if (!token?.actor) return;
+  const now = Date.now();
+  if (now - _npcNarratorMenuOpenedAt < 250) return;
+  _npcNarratorMenuOpenedAt = now;
+
+  closeNpcNarratorTokenContextMenu();
+
+  const { clientX, clientY } = eventClientPoint(event);
+  const name = escapeHtml(token.name || token.actor.name || "NPC");
+
+  const menu = document.createElement("menu");
+  menu.id = "npc-narrator-token-context";
+  menu.className = "npc-narrator-token-context";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <header class="npc-narrator-token-context-title">${name}</header>
+    <li class="context-item" data-action="chat" role="menuitem">
+      <i class="fas fa-comments"></i><span>Chat</span>
+    </li>
+    <li class="context-item" data-action="whisper" role="menuitem">
+      <i class="fas fa-user-secret"></i><span>Whisper</span>
+    </li>
+  `;
+
+  document.body.appendChild(menu);
+
+  // Keep on-screen.
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - rect.width - 8);
+  const top = Math.min(clientY, window.innerHeight - rect.height - 8);
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+
+  const onAction = (ev) => {
+    const item = ev.target?.closest?.("[data-action]");
+    if (item && menu.contains(item)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const action = item.dataset.action;
+      closeNpcNarratorTokenContextMenu();
+      void promptMessage(token, action);
+      return;
+    }
+    // Outside click / Escape
+    if (ev.type === "keydown" && ev.key !== "Escape") return;
+    if (ev.type === "pointerdown" && menu.contains(ev.target)) return;
+    closeNpcNarratorTokenContextMenu();
+  };
+
+  _npcNarratorMenuCloser = onAction;
+  // Defer so the opening right-click does not immediately dismiss the menu.
+  setTimeout(() => {
+    document.addEventListener("pointerdown", onAction, true);
+    document.addEventListener("keydown", onAction, true);
+  }, 0);
+
+  try {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    event?.originalEvent?.preventDefault?.();
+    event?.originalEvent?.stopPropagation?.();
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Patch Token right-click so players get Chat/Whisper on unowned NPCs.
+ * Core Foundry only opens the Token HUD for owned tokens, and often never
+ * dispatches clickRight / context hooks for unowned tokens — so we also listen
+ * on the canvas view.
+ */
+function findTokenAtClientPoint(clientX, clientY) {
+  if (!canvas?.ready || !canvas.tokens) return null;
+  if (canvas.tokens.hover?.actor) return canvas.tokens.hover;
+
+  let point = null;
+  try {
+    point = canvas.canvasCoordinatesFromClient?.({ x: clientX, y: clientY }) ?? null;
+  } catch {
+    point = null;
+  }
+  if (!point) return null;
+
+  const hits = canvas.tokens.placeables.filter((t) => {
+    if (!t.visible || !t.actor) return false;
+    if (t.document?.hidden && !game.user.isGM) return false;
+    try {
+      return Boolean(t.bounds?.contains?.(point.x, point.y));
+    } catch {
+      return false;
+    }
+  });
+  if (!hits.length) return null;
+  hits.sort((a, b) => (Number(a.document?.sort) || 0) - (Number(b.document?.sort) || 0));
+  return hits[hits.length - 1];
+}
+
+function installPlayerTokenRightClickMenu() {
+  const TokenClass = CONFIG?.Token?.objectClass;
+  if (TokenClass?.prototype && !TokenClass.prototype._npcNarratorRightClickPatched) {
+    TokenClass.prototype._npcNarratorRightClickPatched = true;
+    const original = TokenClass.prototype._onClickRight;
+    TokenClass.prototype._onClickRight = function (event) {
+      if (shouldShowPlayerTokenContextMenu(this, event)) {
+        showNpcNarratorTokenContextMenu(this, event);
+        return false;
+      }
+      return original.call(this, event);
+    };
+  }
+
+  const view = canvas?.app?.view || document.getElementById("board");
+  if (!view || view.dataset.npcNarratorContextMenu) return;
+  view.dataset.npcNarratorContextMenu = "1";
+
+  const onRightClick = (event) => {
+    if (event.type === "pointerdown" && event.button !== 2) return;
+
+    const token = findTokenAtClientPoint(event.clientX, event.clientY);
+    if (!shouldShowPlayerTokenContextMenu(token, event)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation?.();
+    event.stopPropagation();
+    showNpcNarratorTokenContextMenu(token, event);
+  };
+
+  view.addEventListener("contextmenu", onRightClick, true);
+  view.addEventListener("pointerdown", onRightClick, true);
+}
+
 async function pickNpcId(hintName) {
   await refreshCatalogs();
   const options = (npcsCache || [])
@@ -1172,6 +1353,12 @@ Hooks.once("ready", async () => {
       }
     }
   }
+
+  installPlayerTokenRightClickMenu();
+});
+
+Hooks.on("canvasReady", () => {
+  installPlayerTokenRightClickMenu();
 });
 
 // System-agnostic sheet entry points (do not inject into system sheet templates).

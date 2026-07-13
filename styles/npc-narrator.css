@@ -26,3 +26,47 @@
 .chat-message.npc-narrator-narration .message-header {
   font-style: italic;
 }
+
+/* Player right-click menu on unowned NPC tokens (Foundry has no HUD/menu there). */
+.npc-narrator-token-context {
+  position: fixed;
+  z-index: 10000;
+  min-width: 180px;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: var(--color-cool-5, #292929);
+  border: 1px solid var(--color-border-light-primary, #782e22);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  color: var(--color-text-light-primary, #f0f0e0);
+  font-family: var(--font-primary, Signika, sans-serif);
+  font-size: 14px;
+}
+
+.npc-narrator-token-context-title {
+  padding: 0.35rem 0.75rem 0.45rem;
+  font-weight: 700;
+  opacity: 0.85;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  margin-bottom: 0.15rem;
+}
+
+.npc-narrator-token-context .context-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.npc-narrator-token-context .context-item:hover {
+  background: var(--color-warm-2, #782e22);
+}
+
+.npc-narrator-token-context .context-item i {
+  width: 1.1rem;
+  text-align: center;
+  opacity: 0.9;
+}
