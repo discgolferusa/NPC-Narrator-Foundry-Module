@@ -138,6 +138,9 @@ async function startHub() {
   hubConnection = new signalR.HubConnectionBuilder()
     .withUrl(`${base}/hubs/campaign-audio`, {
       accessTokenFactory: () => session.sessionToken,
+      // Bearer token auth — do not send cookies. Credentials + ACAO:* is blocked by browsers
+      // when Foundry (e.g. http://localhost:30000) talks to the Yaml Editor origin.
+      withCredentials: false,
     })
     .withAutomaticReconnect()
     .build();
