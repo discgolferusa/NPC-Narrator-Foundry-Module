@@ -192,10 +192,24 @@ async function refreshCatalogs() {
   }
 }
 
+function getPartyMaps() {
+  return game.settings.get(MODULE_ID, "partyMaps") || {};
+}
+
+async function setPartyMap(actorId, playerId) {
+  if (!actorId) return;
+  const map = { ...getPartyMaps() };
+  if (!playerId) delete map[actorId];
+  else map[actorId] = playerId;
+  await game.settings.set(MODULE_ID, "partyMaps", map);
+}
+
+/** @deprecated Legacy per-user fallback; prefer partyMaps[actorId]. */
 function getPlayerMapping() {
   return game.user.getFlag(FLAG_SCOPE, "playerId") || null;
 }
 
+/** @deprecated Legacy per-user fallback; prefer setPartyMap. */
 async function setPlayerMapping(playerId) {
   await game.user.setFlag(FLAG_SCOPE, "playerId", playerId || null);
 }
@@ -205,35 +219,60 @@ function getNpcOverrides() {
 }
 
 async function setNpcOverride(actorId, npcId) {
+  if (!actorId) return;
   const map = { ...getNpcOverrides() };
   if (!npcId) delete map[actorId];
   else map[actorId] = npcId;
   await game.settings.set(MODULE_ID, "npcOverrides", map);
 }
 
-function resolvePlayerIdForUser() {
-  const mapped = getPlayerMapping();
-  if (mapped) return mapped;
-
-  const actor =
-    game.user.character ||
-    canvas.tokens?.controlled?.[0]?.actor ||
-    game.actors?.find((a) => a.isOwner && a.type === "character");
-
+function guessPartyPlayerId(actor) {
   if (!actor || !partyCharactersCache?.length) return null;
   const match = bestNameMatch(actor.name, partyCharactersCache, "name");
   return match?.player_id || match?.id || null;
 }
 
-function resolveNpcIdForToken(token) {
-  const actor = token?.actor;
+function guessNpcId(actor) {
+  if (!actor || !npcsCache?.length) return null;
+  const match = bestNameMatch(actor.name, npcsCache, "name");
+  return match?.id || null;
+}
+
+/**
+ * Resolve Narrator party member for an Actor.
+ * Uses world partyMaps[actorId] (blank on actor copy), then legacy user flag, then name match.
+ */
+function resolvePlayerIdForActor(actor) {
+  if (!actor) return null;
+  const mapped = getPartyMaps()[actor.id];
+  if (mapped) return mapped;
+
+  // Legacy: user-level mapping only when this is the user's assigned character.
+  if (game.user.character?.id === actor.id) {
+    const legacy = getPlayerMapping();
+    if (legacy) return legacy;
+  }
+
+  return guessPartyPlayerId(actor);
+}
+
+function resolvePlayerIdForUser() {
+  const actor =
+    game.user.character ||
+    canvas.tokens?.controlled?.[0]?.actor ||
+    game.actors?.find((a) => a.isOwner);
+  return resolvePlayerIdForActor(actor) || getPlayerMapping();
+}
+
+function resolveNpcIdForActor(actor) {
   if (!actor) return null;
   const overrides = getNpcOverrides();
   if (overrides[actor.id]) return overrides[actor.id];
+  return guessNpcId(actor);
+}
 
-  if (!npcsCache?.length) return null;
-  const match = bestNameMatch(token.name || actor.name, npcsCache, "name");
-  return match?.id || null;
+function resolveNpcIdForToken(token) {
+  return resolveNpcIdForActor(token?.actor);
 }
 
 function whisperTargets(foundryUserId) {
@@ -563,43 +602,140 @@ async function pickNpcId(hintName) {
   });
 }
 
-async function openCharacterMapping() {
-  await refreshCatalogs();
-  const chars = partyCharactersCache || [];
-  if (!chars.length) {
-    ui.notifications.warn("No party characters loaded. Bind the world first.");
+async function openActorNarratorMapping(actor) {
+  if (!actor) {
+    ui.notifications.warn("Open an Actor sheet (or select a token) first.");
     return;
   }
-  const current = getPlayerMapping() || resolvePlayerIdForUser() || "";
-  const options = chars
-    .map((c) => {
+  if (!actor.isOwner && !game.user.isGM) {
+    ui.notifications.error("You do not own this actor.");
+    return;
+  }
+
+  await refreshCatalogs();
+  if (!getSession()?.sessionToken) {
+    ui.notifications.warn("Bind the Foundry world to NPC Narrator before mapping actors.");
+    return;
+  }
+
+  const chars = partyCharactersCache || [];
+  const npcs = npcsCache || [];
+  const currentPlayer =
+    getPartyMaps()[actor.id] ||
+    (game.user.character?.id === actor.id ? getPlayerMapping() : null) ||
+    guessPartyPlayerId(actor) ||
+    "";
+  const currentNpc = getNpcOverrides()[actor.id] || guessNpcId(actor) || "";
+
+  const partyOptions = [
+    `<option value="">(None — unmapped)</option>`,
+    ...chars.map((c) => {
       const id = c.player_id || c.id;
       const label = c.label || c.name || id;
-      return `<option value="${id}" ${id === current ? "selected" : ""}>${label}</option>`;
-    })
-    .join("");
+      return `<option value="${id}" ${id === currentPlayer ? "selected" : ""}>${label}</option>`;
+    }),
+  ].join("");
+
+  const npcOptions = [
+    `<option value="">(None — unmapped)</option>`,
+    ...npcs.map((n) => {
+      const id = n.id;
+      const label = n.name || id;
+      return `<option value="${id}" ${id === currentNpc ? "selected" : ""}>${label}</option>`;
+    }),
+  ].join("");
+
+  const canEditParty = actor.isOwner || game.user.isGM;
+  const canEditNpc = game.user.isGM;
+
+  const content = `
+    <div class="npc-narrator-dialog">
+      <p>Mappings are stored by actor id in world settings. Duplicating this actor creates a new id, so copies start <strong>unmapped</strong>.</p>
+      <p><strong>Actor:</strong> ${actor.name.replace(/</g, "&lt;")}</p>
+      ${canEditParty ? `
+      <div class="form-group">
+        <label>Party member (who speaks)</label>
+        <select id="npc-narrator-party-map">${partyOptions}</select>
+        <p class="notes">Used when you Chat/Whisper from this character.</p>
+      </div>` : ""}
+      ${canEditNpc ? `
+      <div class="form-group">
+        <label>Narrator NPC (token target)</label>
+        <select id="npc-narrator-npc-map">${npcOptions}</select>
+        <p class="notes">Used when chatting with this actor’s token. Leave blank to rely on name match.</p>
+      </div>` : `
+      <p class="notes">Ask a GM to map Narrator NPC targets.</p>`}
+    </div>`;
 
   new Dialog({
-    title: "NPC Narrator — Character mapping",
-    content: `
-      <p>Associate your Foundry user with a party character for NPC turns.</p>
-      <div class="form-group">
-        <label>Party character</label>
-        <select id="npc-narrator-player">${options}</select>
-      </div>`,
+    title: "NPC Narrator — Actor mapping",
+    content,
     buttons: {
       save: {
+        icon: '<i class="fas fa-save"></i>',
         label: "Save",
         callback: async (html) => {
-          const id = html.find("#npc-narrator-player").val();
-          await setPlayerMapping(id);
-          ui.notifications.info("Character mapping saved.");
+          try {
+            if (canEditParty) {
+              const partyId = String(html.find("#npc-narrator-party-map").val() || "").trim();
+              await setPartyMap(actor.id, partyId || null);
+              // Keep legacy user flag in sync when mapping the assigned character.
+              if (game.user.character?.id === actor.id) {
+                await setPlayerMapping(partyId || null);
+              }
+            }
+            if (canEditNpc) {
+              const npcId = String(html.find("#npc-narrator-npc-map").val() || "").trim();
+              await setNpcOverride(actor.id, npcId || null);
+            }
+            ui.notifications.info(`NPC Narrator mapping saved for ${actor.name}.`);
+          } catch (err) {
+            console.error(`${MODULE_ID} actor mapping failed`, err);
+            ui.notifications.error(err.message || String(err));
+          }
         },
       },
       cancel: { label: "Cancel" },
     },
     default: "save",
   }).render(true);
+}
+
+async function openCharacterMapping() {
+  const actor =
+    game.user.character ||
+    canvas.tokens?.controlled?.[0]?.actor ||
+    null;
+  if (actor) {
+    await openActorNarratorMapping(actor);
+    return;
+  }
+  ui.notifications.warn("Assign a character to your user, open an Actor sheet, or select a token first.");
+}
+
+function addActorSheetNarratorButton(buttons, actor) {
+  if (!actor) return;
+  if (!actor.isOwner && !game.user.isGM) return;
+  buttons.unshift({
+    label: "NPC Narrator",
+    class: "npc-narrator-map",
+    icon: "fas fa-theater-masks",
+    onclick: () => {
+      void openActorNarratorMapping(actor);
+    },
+  });
+}
+
+function addActorSheetV2NarratorControl(controls, actor) {
+  if (!actor) return;
+  if (!actor.isOwner && !game.user.isGM) return;
+  controls.push({
+    icon: "fa-solid fa-theater-masks",
+    label: "NPC Narrator",
+    onClick: () => {
+      void openActorNarratorMapping(actor);
+    },
+  });
 }
 
 async function openBindDialog() {
@@ -787,8 +923,18 @@ Hooks.once("init", () => {
     default: {},
   });
 
+  game.settings.register(MODULE_ID, "partyMaps", {
+    name: "Actor → party member maps",
+    hint: "Keyed by Foundry actor id so duplicated actors start unmapped.",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {},
+  });
+
   game.settings.register(MODULE_ID, "npcOverrides", {
-    name: "NPC token overrides",
+    name: "Actor → Narrator NPC maps",
+    hint: "Keyed by Foundry actor id so duplicated actors start unmapped.",
     scope: "world",
     config: false,
     type: Object,
@@ -801,6 +947,7 @@ Hooks.once("ready", async () => {
     ...(game.npcNarrator || {}),
     bind: openBindDialog,
     mapCharacter: openCharacterMapping,
+    mapActor: openActorNarratorMapping,
     refresh: refreshCatalogs,
     unbind: unbindSession,
   };
@@ -816,26 +963,41 @@ Hooks.once("ready", async () => {
     }
   }
 
-  if (partyCharactersCache?.length && !getPlayerMapping()) {
-    const guessed = resolvePlayerIdForUser();
-    if (guessed) await setPlayerMapping(guessed);
+  // Migrate legacy user flag → partyMaps for the assigned character when missing.
+  const assigned = game.user.character;
+  if (assigned && partyCharactersCache?.length) {
+    const existing = getPartyMaps()[assigned.id];
+    if (!existing) {
+      const legacy = getPlayerMapping() || guessPartyPlayerId(assigned);
+      if (legacy) await setPartyMap(assigned.id, legacy);
+    }
   }
 });
 
+// System-agnostic sheet entry points (do not inject into system sheet templates).
+Hooks.on("getActorSheetHeaderButtons", (sheet, buttons) => {
+  addActorSheetNarratorButton(buttons, sheet.actor || sheet.document);
+});
+
+Hooks.on("getHeaderControlsApplicationV2", (app, controls) => {
+  const doc = app.document;
+  if (!doc || doc.documentName !== "Actor") return;
+  addActorSheetV2NarratorControl(controls, doc);
+});
+
 Hooks.on("getActorDirectoryEntryContext", (_html, options) => {
-  if (!game.user.isGM) return;
   options.push({
-    name: "NPC Narrator: Map to NPC",
+    name: "NPC Narrator: Map actor",
     icon: '<i class="fas fa-theater-masks"></i>',
+    condition: (li) => {
+      const actorId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
+      const actor = game.actors.get(actorId);
+      return Boolean(actor && (actor.isOwner || game.user.isGM));
+    },
     callback: async (li) => {
       const actorId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
       const actor = game.actors.get(actorId);
-      if (!actor) return;
-      const npcId = await pickNpcId(actor.name);
-      if (npcId) {
-        await setNpcOverride(actor.id, npcId);
-        ui.notifications.info(`Mapped ${actor.name} → ${npcId}`);
-      }
+      if (actor) await openActorNarratorMapping(actor);
     },
   });
 });

@@ -6,8 +6,9 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 
 - GM pairs the world with a one-time code from the DM console (same pattern as Discord)
 - Registers as a campaign **device** (`role: foundry`) on SignalR
-- Players map their Foundry user to a party character (auto name-match + override)
-- Token HUD: **Chat** or **Whisper** with an NPC (name-match + GM override)
+- **System-agnostic Actor sheet header button** → map party member / Narrator NPC
+- Mappings stored by **actor id** in world settings (duplicated actors start unmapped)
+- Token HUD: **Chat** or **Whisper** with an NPC (name-match + override)
 - Replies post to Foundry chat as **Narrator** and **NPC** lines
 - Whisper replies stay private to the sending player (+ GMs)
 - TTS follows the GM’s existing audio recipient (e.g. Discord)
@@ -26,11 +27,12 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 2. In Foundry: Module Settings → paste the pairing code (or `/narrator bind` / `game.npcNarrator.bind()`).
 3. Set **Campaign text output** → Specific device → the Foundry device.
 4. Set **Campaign audio output** as desired (e.g. Discord).
-5. Right-click actors in the sidebar → **NPC Narrator: Map to NPC** when name match fails.
+5. Open any Actor sheet → **NPC Narrator** header button (or right-click Actor Directory → Map actor).
 
 ## Player setup
 
-- `/narrator character` — confirm or change party character mapping
+- Open your character sheet → **NPC Narrator** header button → choose party member
+- Or `/narrator character` (uses assigned character / selected token)
 - Select an NPC token → Token HUD chat / whisper icons
 
 ## Chat commands
@@ -38,8 +40,17 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 | Command | Who | Action |
 |---------|-----|--------|
 | `/narrator bind` | GM | Open bind dialog |
-| `/narrator character` | Anyone | Character mapping |
+| `/narrator character` | Anyone | Map assigned/selected actor |
 | `/narrator status` | Anyone | Show bind status |
+
+## Mapping storage (copy-safe)
+
+| Map | Setting key | Behavior on actor duplicate |
+|-----|-------------|-----------------------------|
+| Party member | `partyMaps[actorId]` | New actor id → blank |
+| Narrator NPC | `npcOverrides[actorId]` | New actor id → blank |
+
+API: `game.npcNarrator.mapActor(actor)`
 
 ## Architecture
 
