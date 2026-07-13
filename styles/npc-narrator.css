@@ -1,0 +1,28 @@
+/* NPC Narrator Foundry module */
+.npc-narrator-dialog .form-group {
+  margin-bottom: 0.75rem;
+}
+
+.npc-narrator-dialog label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.npc-narrator-status {
+  margin-top: 0.5rem;
+  opacity: 0.85;
+  font-size: 0.9em;
+}
+
+.npc-narrator-status.ok {
+  color: #2d6a4f;
+}
+
+.npc-narrator-status.err {
+  color: #9b2226;
+}
+
+.chat-message.npc-narrator-narration .message-header {
+  font-style: italic;
+}
