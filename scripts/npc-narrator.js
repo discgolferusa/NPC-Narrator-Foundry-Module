@@ -538,25 +538,42 @@ async function openBindDialog() {
   const status = session
     ? `Bound to campaign <code>${session.campaignId}</code>`
     : "Not bound.";
+  const currentUrl = editorBaseUrl();
 
   new Dialog({
     title: "NPC Narrator — Bind world",
     content: `
-      <p class="npc-narrator-status">${status}</p>
-      <p>Paste the pairing code from the DM console (Player Invites → Foundry VTT).</p>
-      <div class="form-group">
-        <label>Pairing code</label>
-        <input type="text" id="npc-narrator-pairing" style="width:100%" />
+      <div class="npc-narrator-dialog">
+        <p class="npc-narrator-status ${session ? "ok" : ""}">${status}</p>
+        <p>Paste the one-time pairing code from the DM console (Player Invites → Foundry VTT).</p>
+        <div class="form-group">
+          <label>Yaml Editor base URL</label>
+          <input type="text" id="npc-narrator-url" style="width:100%" value="${currentUrl.replace(/"/g, "&quot;")}" placeholder="https://editor.example.com" />
+        </div>
+        <div class="form-group">
+          <label>Pairing code</label>
+          <input type="text" id="npc-narrator-pairing" style="width:100%" placeholder="Paste pairing code" autocomplete="off" />
+        </div>
       </div>`,
     buttons: {
       bind: {
         icon: '<i class="fas fa-link"></i>',
         label: "Bind",
         callback: async (html) => {
+          const url = String(html.find("#npc-narrator-url").val() || "").trim().replace(/\/+$/, "");
           const code = String(html.find("#npc-narrator-pairing").val() || "").trim();
-          if (!code) return;
+          if (!url) {
+            ui.notifications.error("Set the Yaml Editor base URL first.");
+            return;
+          }
+          if (!code) {
+            ui.notifications.error("Paste a pairing code.");
+            return;
+          }
           try {
+            await game.settings.set(MODULE_ID, "editorBaseUrl", url);
             await bindWithPairingCode(code);
+            await game.settings.set(MODULE_ID, "pairingCode", "");
             ui.notifications.info("NPC Narrator: world bound.");
           } catch (err) {
             ui.notifications.error(err.message || String(err));
@@ -575,6 +592,70 @@ async function openBindDialog() {
   }).render(true);
 }
 
+/**
+ * Settings application opened from Configure Settings → "Bind / Unbind".
+ * Pairing codes are one-time and are not stored permanently.
+ */
+class NpcNarratorPairingMenu extends FormApplication {
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "npc-narrator-pairing-menu",
+      title: "NPC Narrator — Campaign pairing",
+      classes: ["npc-narrator-dialog"],
+      template: `modules/${MODULE_ID}/templates/pairing.hbs`,
+      width: 480,
+      height: "auto",
+      closeOnSubmit: false,
+      submitOnChange: false,
+    });
+  }
+
+  getData() {
+    const session = getSession();
+    const campaignId = session?.campaignId
+      ? String(session.campaignId).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;")
+      : "";
+    return {
+      editorBaseUrl: editorBaseUrl(),
+      statusHtml: session
+        ? `Bound to campaign <code>${campaignId}</code>`
+        : "Not bound to a campaign yet.",
+      bound: Boolean(session?.sessionToken),
+    };
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+    html.find(".npc-narrator-unbind").on("click", async (event) => {
+      event.preventDefault();
+      await unbindSession();
+      this.render(true);
+    });
+  }
+
+  async _updateObject(_event, formData) {
+    const url = String(formData.editorBaseUrl || "").trim().replace(/\/+$/, "");
+    const code = String(formData.pairingCode || "").trim();
+    if (!url) {
+      ui.notifications.error("Set the Yaml Editor base URL first.");
+      return;
+    }
+    await game.settings.set(MODULE_ID, "editorBaseUrl", url);
+    if (!code) {
+      ui.notifications.warn("Enter a pairing code to bind, or use Unbind.");
+      return;
+    }
+    try {
+      await bindWithPairingCode(code);
+      await game.settings.set(MODULE_ID, "pairingCode", "");
+      ui.notifications.info("NPC Narrator: world bound.");
+      this.render(true);
+    } catch (err) {
+      ui.notifications.error(err.message || String(err));
+    }
+  }
+}
+
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "editorBaseUrl", {
     name: "Yaml Editor base URL",
@@ -583,6 +664,46 @@ Hooks.once("init", () => {
     config: true,
     type: String,
     default: "",
+    restricted: true,
+  });
+
+  game.settings.register(MODULE_ID, "pairingCode", {
+    name: "Pairing code",
+    hint: "Paste a one-time code from the DM console, then Save Changes to bind — or use Configure Settings → NPC Narrator → Bind / Unbind.",
+    scope: "world",
+    config: true,
+    type: String,
+    default: "",
+    restricted: true,
+    onChange: (value) => {
+      // Defer until ready so bind helpers and notifications exist.
+      if (!game.ready || !game.user?.isGM) return;
+      const code = String(value || "").trim();
+      if (!code) return;
+      void (async () => {
+        try {
+          if (!editorBaseUrl()) {
+            ui.notifications.error("Set Yaml Editor base URL before pairing.");
+            return;
+          }
+          await bindWithPairingCode(code);
+          // Clear the one-time code from settings after a successful bind.
+          await game.settings.set(MODULE_ID, "pairingCode", "");
+          ui.notifications.info("NPC Narrator: world bound from settings.");
+        } catch (err) {
+          ui.notifications.error(err.message || String(err));
+        }
+      })();
+    },
+  });
+
+  game.settings.registerMenu(MODULE_ID, "pairingMenu", {
+    name: "Campaign pairing",
+    label: "Bind / Unbind",
+    hint: "Open the pairing form to paste a code from the DM console, bind this world, or unbind.",
+    icon: "fas fa-link",
+    type: NpcNarratorPairingMenu,
+    restricted: true,
   });
 
   game.settings.register(MODULE_ID, "session", {

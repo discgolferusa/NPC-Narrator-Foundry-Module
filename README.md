@@ -16,12 +16,14 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 
 1. Copy this folder into Foundry `Data/modules/npc-narrator` (folder name must match `module.json` `id`).
 2. Enable **NPC Narrator** in the world module list.
-3. Set **Yaml Editor base URL** in module settings (HTTPS origin, no trailing slash).
+3. Open **Configure Settings → Module Settings → NPC Narrator**:
+   - Set **Yaml Editor base URL** (HTTPS origin, no trailing slash)
+   - Paste a **Pairing code** from the DM console and Save, **or** use **Campaign pairing → Bind / Unbind**
 
 ## GM setup
 
 1. In NPC Narrator DM console → Player Invites → **Generate Foundry Pairing Code**.
-2. In Foundry chat: `/narrator bind` (or `game.npcNarrator.bind()`) and paste the code.
+2. In Foundry: Module Settings → paste the pairing code (or `/narrator bind` / `game.npcNarrator.bind()`).
 3. Set **Campaign text output** → Specific device → the Foundry device.
 4. Set **Campaign audio output** as desired (e.g. Discord).
 5. Right-click actors in the sidebar → **NPC Narrator: Map to NPC** when name match fails.
