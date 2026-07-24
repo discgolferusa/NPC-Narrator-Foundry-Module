@@ -77,3 +77,9 @@ Foundry module → Yaml Editor (pairing, Bearer APIs, SignalR)
 ```
 
 See yaml-editor `docs/FOUNDRY_INTEGRATION.md`.
+
+## Security notes
+
+- Chat and dialog content from the API / LLM is HTML-escaped before render.
+- Bind / unbind are GM-only (`openBindDialog`, `bindWithPairingCode`, `unbindSession`, `game.npcNarrator.bind/unbind`).
+- **Follow-up:** the campaign Bearer session token is currently stored in a Foundry **world** setting and is readable by all clients. A future redesign should use per-user short-lived tokens or a GM-only proxy so players never hold the campaign Bearer.
