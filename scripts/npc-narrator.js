@@ -330,7 +330,7 @@ async function postChatLine({ content, alias, role, visibility, foundryUserId, r
   if (requestId && role && chatAlreadyPosted(requestId, role)) return;
 
   const isWhisper = visibility === "whisper";
-  let body = content.trim();
+  let body = escapeHtml(content.trim());
   if (role === "narrator") {
     // Narration reads as stage direction in chat.
     body = `<em class="npc-narrator-narration">${body}</em>`;
@@ -477,6 +477,10 @@ async function handleCampaignText(payload) {
 }
 
 async function bindWithPairingCode(pairingToken, options = {}) {
+  if (!game.user?.isGM) {
+    throw new Error("Only the GM can bind this world to NPC Narrator.");
+  }
+
   const worldId = game.world?.id;
   if (!worldId) throw new Error("World id unavailable.");
 
@@ -556,6 +560,10 @@ async function bindWithPairingCode(pairingToken, options = {}) {
 }
 
 async function unbindSession() {
+  if (!game.user?.isGM) {
+    ui.notifications.error("Only the GM can unbind NPC Narrator.");
+    return;
+  }
   await stopHub();
   await setSession(null);
   partyCharactersCache = null;
@@ -668,7 +676,7 @@ async function promptMessage(token, visibility) {
 
   const content = `
     <div class="npc-narrator-dialog">
-      <p class="npc-narrator-status">${resolvedNpcId ? `NPC: <code>${resolvedNpcId}</code>` : ""}</p>
+      <p class="npc-narrator-status">${resolvedNpcId ? `NPC: <code>${escapeHtml(resolvedNpcId)}</code>` : ""}</p>
       <div class="form-group">
         <label>Message</label>
         <textarea name="message" id="npc-narrator-text" rows="4" style="width:100%"></textarea>
@@ -1062,7 +1070,7 @@ async function pickNpcId(hintName) {
   const npcOptionsHtml = npcsCache
     .map((n) => {
       const sel = n.id === match?.id ? " selected" : "";
-      return `<option value="${n.id}"${sel}>${n.name} (${n.id})</option>`;
+      return `<option value="${escapeHtml(n.id)}"${sel}>${escapeHtml(n.name)} (${escapeHtml(n.id)})</option>`;
     })
     .join("");
   const result = await dialogWait({
@@ -1116,7 +1124,7 @@ async function openActorNarratorMapping(actor) {
     ...chars.map((c) => {
       const id = c.player_id || c.id;
       const label = c.label || c.name || id;
-      return `<option value="${id}" ${id === currentPlayer ? "selected" : ""}>${label}</option>`;
+      return `<option value="${escapeHtml(id)}" ${id === currentPlayer ? "selected" : ""}>${escapeHtml(label)}</option>`;
     }),
   ].join("");
 
@@ -1125,7 +1133,7 @@ async function openActorNarratorMapping(actor) {
     ...npcs.map((n) => {
       const id = n.id;
       const label = n.name || id;
-      return `<option value="${id}" ${id === currentNpc ? "selected" : ""}>${label}</option>`;
+      return `<option value="${escapeHtml(id)}" ${id === currentNpc ? "selected" : ""}>${escapeHtml(label)}</option>`;
     }),
   ].join("");
 
@@ -1138,7 +1146,7 @@ async function openActorNarratorMapping(actor) {
   const content = `
     <div class="npc-narrator-dialog">
       <p>Mappings are keyed by actor id. Duplicating this actor creates a new id, so copies start <strong>unmapped</strong>.</p>
-      <p><strong>Actor:</strong> ${actor.name.replace(/</g, "&lt;")}</p>
+      <p><strong>Actor:</strong> ${escapeHtml(actor.name)}</p>
       ${canEditParty ? `
       <div class="form-group">
         <label>Party member (who speaks)</label>
@@ -1231,9 +1239,14 @@ function addActorSheetV2NarratorControl(controls, actor) {
 }
 
 async function openBindDialog() {
+  if (!game.user?.isGM) {
+    ui.notifications.error("Only the GM can bind or unbind NPC Narrator.");
+    return;
+  }
+
   const session = getSession();
   const status = session
-    ? `Bound to campaign <code>${session.campaignId}</code>`
+    ? `Bound to campaign <code>${escapeHtml(session.campaignId)}</code>`
     : "Not bound.";
   const currentUrl = editorBaseUrl();
   const currentCode = savedPairingCode();
@@ -1246,11 +1259,11 @@ async function openBindDialog() {
         <p>Uses the Yaml Editor URL and pairing code from module settings (you can edit them here).</p>
         <div class="form-group">
           <label>Yaml Editor base URL</label>
-          <input type="text" name="editorUrl" id="npc-narrator-url" style="width:100%" value="${currentUrl.replace(/"/g, "&quot;")}" placeholder="https://editor.example.com" />
+          <input type="text" name="editorUrl" id="npc-narrator-url" style="width:100%" value="${escapeHtml(currentUrl)}" placeholder="https://editor.example.com" />
         </div>
         <div class="form-group">
           <label>Pairing code</label>
-          <input type="text" name="pairingCode" id="npc-narrator-pairing" style="width:100%" value="${currentCode.replace(/"/g, "&quot;")}" placeholder="Paste pairing code" autocomplete="off" />
+          <input type="text" name="pairingCode" id="npc-narrator-pairing" style="width:100%" value="${escapeHtml(currentCode)}" placeholder="Paste pairing code" autocomplete="off" />
         </div>
       </div>`,
     buttons: [
@@ -1474,13 +1487,19 @@ Hooks.once("init", () => {
 Hooks.once("ready", async () => {
   game.npcNarrator = {
     ...(game.npcNarrator || {}),
-    bind: openBindDialog,
+    bind: () => {
+      if (!game.user.isGM) {
+        ui.notifications.error("Only the GM can bind NPC Narrator.");
+        return;
+      }
+      return openBindDialog();
+    },
     mapCharacter: openCharacterMapping,
     mapActor: openActorNarratorMapping,
     chat: () => promptMessageForTargetedNpc("chat"),
     whisper: () => promptMessageForTargetedNpc("whisper"),
     refresh: refreshCatalogs,
-    unbind: unbindSession,
+    unbind: () => unbindSession(),
   };
 
   const session = getSession();
@@ -1592,7 +1611,7 @@ Hooks.on("chatMessage", (_log, message) => {
     const s = getSession();
     ChatMessage.create({
       content: s
-        ? `NPC Narrator bound to <code>${s.campaignId}</code>`
+        ? `NPC Narrator bound to <code>${escapeHtml(s.campaignId)}</code>`
         : "NPC Narrator is not bound.",
       whisper: [game.user.id],
     });
