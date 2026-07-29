@@ -129,7 +129,19 @@ async function runSteps({ dialogWait, title, steps, draft }) {
       buttons.push({
         action: "skip",
         label: "Skip",
-        callback: () => "skip",
+        callback: (_e, button) => {
+          // Apply current form state (clears/edits) before advancing — do not keep a stale draft.
+          const root =
+            button?.form?.querySelector?.(".npc-narrator-wizard") ||
+            button?.form?.querySelector?.("form") ||
+            button?.form;
+          const err = step.collect?.(root, draft);
+          if (err) {
+            ui.notifications.warn(err);
+            return "invalid";
+          }
+          return "skip";
+        },
       });
     }
     buttons.push({
@@ -488,9 +500,12 @@ export async function runLocationAuthoringWizard(deps) {
       title: "Sub-places",
       description: "Named spots inside this location (name + short description). Public knowledge can be filled later in the editor.",
       render: (d) => {
-        const rows = d.important_locations.length
-          ? d.important_locations
-          : [{ name: "", description: "" }, { name: "", description: "" }];
+        const rows = [...(d.important_locations || [])];
+        // Always leave at least one blank row (minimum two slots) so a second entry can be added after navigating back.
+        const target = Math.min(8, Math.max(2, rows.length + 1));
+        while (rows.length < target) {
+          rows.push({ name: "", description: "" });
+        }
         return rows
           .map(
             (row, i) => `
