@@ -280,9 +280,10 @@ async function setLocationMap(sceneId, locationId) {
   await game.settings.set(MODULE_ID, "locationMaps", map);
 }
 
-/** Strip simple HTML and collapse whitespace for wizard prefill. */
+/** Strip simple HTML and collapse whitespace for wizard prefill. Non-strings are ignored. */
 function plainTextSeed(value, maxLen = 500) {
-  const text = String(value || "")
+  if (typeof value !== "string") return "";
+  const text = value
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -292,13 +293,16 @@ function plainTextSeed(value, maxLen = 500) {
 
 function actorBiographySeed(actor) {
   const sys = actor?.system || {};
+  // Prefer string fields only — never fall through to parent objects (avoids "[object Object]").
   const candidates = [
     sys.details?.biography?.value,
-    sys.details?.biography,
+    sys.details?.biography?.public,
     sys.biography?.value,
-    sys.biography,
+    sys.biography?.public,
     sys.description?.value,
-    sys.description,
+    typeof sys.details?.biography === "string" ? sys.details.biography : null,
+    typeof sys.biography === "string" ? sys.biography : null,
+    typeof sys.description === "string" ? sys.description : null,
   ];
   for (const c of candidates) {
     const text = plainTextSeed(c, 400);
@@ -766,6 +770,7 @@ async function unbindSession() {
   await setSession(null);
   partyCharactersCache = null;
   npcsCache = null;
+  locationsCache = null;
   ui.notifications.info("NPC Narrator: unbound from campaign.");
 }
 
