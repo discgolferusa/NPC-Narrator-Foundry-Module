@@ -1010,6 +1010,61 @@ function tokenFromContextApplication(application, li) {
   return canvas.tokens?.hover || null;
 }
 
+/** Resolve directory entry id from ApplicationV2 HTMLElement (or legacy jQuery). */
+function directoryEntryId(target) {
+  const el = target?.dataset ? target : target?.[0];
+  if (!el) return null;
+  const ds = el.dataset || {};
+  return (
+    ds.documentId ||
+    ds.entryId ||
+    el.getAttribute?.("data-document-id") ||
+    el.getAttribute?.("data-entry-id") ||
+    null
+  );
+}
+
+function addActorDirectoryNarratorOptions(menuItems) {
+  menuItems.push(
+    {
+      name: "NPC Narrator: Map actor",
+      icon: '<i class="fas fa-theater-masks"></i>',
+      condition: (target) => {
+        const actor = game.actors.get(directoryEntryId(target));
+        return Boolean(actor && (actor.isOwner || game.user.isGM));
+      },
+      callback: async (target) => {
+        const actor = game.actors.get(directoryEntryId(target));
+        if (actor) await openActorNarratorMapping(actor);
+      },
+    },
+    {
+      name: "NPC Narrator: Create NPC…",
+      icon: '<i class="fas fa-wand-magic-sparkles"></i>',
+      condition: (target) => {
+        if (!game.user.isGM) return false;
+        return Boolean(game.actors.get(directoryEntryId(target)));
+      },
+      callback: async (target) => {
+        const actor = game.actors.get(directoryEntryId(target));
+        if (actor) await openCreateNarratorNpcFromActor(actor);
+      },
+    },
+  );
+}
+
+function addSceneDirectoryNarratorOptions(menuItems) {
+  menuItems.push({
+    name: "NPC Narrator: Create Location…",
+    icon: '<i class="fas fa-map-location-dot"></i>',
+    condition: (target) => game.user.isGM && Boolean(game.scenes.get(directoryEntryId(target))),
+    callback: async (target) => {
+      const scene = game.scenes.get(directoryEntryId(target));
+      if (scene) await openCreateNarratorLocationFromScene(scene);
+    },
+  });
+}
+
 function addTokenNarratorContextOptions(application, menuItems) {
   menuItems.push(
     {
@@ -1797,48 +1852,12 @@ Hooks.on("getHeaderControlsApplicationV2", (app, controls) => {
   }
 });
 
-Hooks.on("getActorDirectoryEntryContext", (_html, options) => {
-  options.push({
-    name: "NPC Narrator: Map actor",
-    icon: '<i class="fas fa-theater-masks"></i>',
-    condition: (li) => {
-      const actorId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
-      const actor = game.actors.get(actorId);
-      return Boolean(actor && (actor.isOwner || game.user.isGM));
-    },
-    callback: async (li) => {
-      const actorId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
-      const actor = game.actors.get(actorId);
-      if (actor) await openActorNarratorMapping(actor);
-    },
-  });
-  options.push({
-    name: "NPC Narrator: Create NPC…",
-    icon: '<i class="fas fa-wand-magic-sparkles"></i>',
-    condition: (li) => {
-      if (!game.user.isGM) return false;
-      const actorId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
-      return Boolean(game.actors.get(actorId));
-    },
-    callback: async (li) => {
-      const actorId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
-      const actor = game.actors.get(actorId);
-      if (actor) await openCreateNarratorNpcFromActor(actor);
-    },
-  });
+Hooks.on("getActorContextOptions", (_application, menuItems) => {
+  addActorDirectoryNarratorOptions(menuItems);
 });
 
-Hooks.on("getSceneDirectoryEntryContext", (_html, options) => {
-  options.push({
-    name: "NPC Narrator: Create Location…",
-    icon: '<i class="fas fa-map-location-dot"></i>',
-    condition: () => game.user.isGM,
-    callback: async (li) => {
-      const sceneId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
-      const scene = game.scenes.get(sceneId);
-      if (scene) await openCreateNarratorLocationFromScene(scene);
-    },
-  });
+Hooks.on("getSceneContextOptions", (_application, menuItems) => {
+  addSceneDirectoryNarratorOptions(menuItems);
 });
 
 Hooks.on("renderTokenHUD", (hud, html) => {
