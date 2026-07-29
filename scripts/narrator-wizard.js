@@ -33,12 +33,17 @@ function uniqueStrings(values) {
 }
 
 function chipHtml(group, suggestions, selected) {
-  const sel = new Set((selected || []).map((v) => String(v).toLowerCase()));
+  const selectedList = uniqueStrings(selected || []);
+  const suggestionSet = new Set((suggestions || []).map((v) => String(v).toLowerCase()));
+  const sel = new Set(selectedList.map((v) => String(v).toLowerCase()));
+  // Preserve custom entries as chips so Back → Next does not drop them.
+  const extras = selectedList.filter((v) => !suggestionSet.has(String(v).toLowerCase()));
+  const labels = [...(suggestions || []), ...extras];
   return `
     <div class="npc-narrator-chips" data-chip-group="${group}">
-      ${suggestions
+      ${labels
         .map((label) => {
-          const checked = sel.has(label.toLowerCase()) ? "checked" : "";
+          const checked = sel.has(String(label).toLowerCase()) ? "checked" : "";
           return `<label class="npc-narrator-chip"><input type="checkbox" value="${escapeAttr(label)}" ${checked}/><span>${escapeHtml(label)}</span></label>`;
         })
         .join("")}
@@ -333,7 +338,7 @@ export async function runNpcAuthoringWizard(deps) {
         </fieldset>
         <div class="form-group"><label>Forbidden topics</label><input type="text" name="forbidden" value="${escapeAttr(d.probes.forbidden)}" /></div>
         <div class="form-group"><label>Catchphrase / mannerism</label><input type="text" name="mannerism" value="${escapeAttr(d.probes.mannerism)}" /></div>
-        <div class="form-group"><label>Extra rule</label><input type="text" name="customRule" placeholder="Optional custom rule" /></div>`,
+        <div class="form-group"><label>Extra rule</label><input type="text" name="customRule" value="${escapeAttr((d.probes.customRules || [])[0] || "")}" placeholder="Optional custom rule" /></div>`,
       collect: (root, d) => {
         d.probes.stayInCharacter = Boolean(root?.querySelector?.("[name='stay']")?.checked);
         d.probes.firstPerson = Boolean(root?.querySelector?.("[name='first']")?.checked);
@@ -541,7 +546,7 @@ export async function runLocationAuthoringWizard(deps) {
         </fieldset>
         <div class="form-group"><label>Forbidden topics</label><input type="text" name="forbidden" value="${escapeAttr(d.probes.forbidden)}" /></div>
         <div class="form-group"><label>What every local knows</label><input type="text" name="localsKnow" value="${escapeAttr(d.probes.localsKnow)}" /></div>
-        <div class="form-group"><label>Extra rule</label><input type="text" name="customRule" /></div>`,
+        <div class="form-group"><label>Extra rule</label><input type="text" name="customRule" value="${escapeAttr((d.probes.customRules || [])[0] || "")}" /></div>`,
       collect: (root, d) => {
         d.probes.strangers = String(root?.querySelector?.("[name='strangers']:checked")?.value || "guarded");
         d.probes.rumors = String(root?.querySelector?.("[name='rumorShare']:checked")?.value || "locals");

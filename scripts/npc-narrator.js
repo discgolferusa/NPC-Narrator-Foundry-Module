@@ -310,13 +310,25 @@ function actorBiographySeed(actor) {
 function sceneSummarySeed(scene) {
   try {
     const journalId = scene?.journal;
-    if (journalId) {
-      const journal = game.journal.get(journalId);
-      const page = journal?.pages?.contents?.[0];
-      const html = page?.text?.content || "";
-      const text = plainTextSeed(html, 2000);
-      if (text) return text;
+    if (!journalId) return "";
+    const journal = game.journal.get(journalId);
+    if (!journal) return "";
+
+    // Prefer the scene's linked page when set (not always contents[0]).
+    const pageId = scene.journalEntryPage || scene.journalPageId || null;
+    let page = null;
+    if (pageId) {
+      page = journal.pages?.get?.(pageId) || null;
+      if (!page && journal.pages?.contents) {
+        page = journal.pages.contents.find((p) => p.id === pageId) || null;
+      }
     }
+    if (!page) {
+      page = journal.pages?.contents?.[0] || null;
+    }
+
+    const html = page?.text?.content || "";
+    return plainTextSeed(html, 2000);
   } catch {
     /* ignore */
   }
