@@ -220,3 +220,8 @@
 .npc-narrator-review p {
   margin: 0.45rem 0;
 }
+
+.npc-narrator-review .notes {
+  margin-top: 0.75rem;
+  opacity: 0.85;
+}

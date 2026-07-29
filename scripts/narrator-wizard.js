@@ -96,6 +96,90 @@ function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
 
+function reviewDash(value) {
+  const text = String(value ?? "").trim();
+  return text ? escapeHtml(text) : "—";
+}
+
+function reviewList(values) {
+  const items = (values || []).map((v) => String(v ?? "").trim()).filter(Boolean);
+  return items.length ? escapeHtml(items.join("; ")) : "—";
+}
+
+function reviewRow(label, valueHtml) {
+  return `<p><strong>${escapeHtml(label)}:</strong> ${valueHtml}</p>`;
+}
+
+function locationLabel(locations, locationId) {
+  if (!locationId) return "—";
+  const match = (locations || []).find((l) => l.id === locationId);
+  if (match) return `${match.name || match.id} (${match.id})`;
+  return locationId;
+}
+
+function genderLabel(gender) {
+  if (gender === "female") return "Female";
+  if (gender === "they") return "Non-binary / they";
+  return "Male";
+}
+
+function npcReviewHtml(d, locations) {
+  const pronouns = pronounsForGender(d.gender);
+  const pronounText = `${pronouns.subject}/${pronouns.object}`;
+  const rules = buildNpcLlmRules(d.probes);
+  return `
+    <div class="npc-narrator-review">
+      ${reviewRow("Name", reviewDash(d.name))}
+      ${reviewRow("Role", reviewDash(d.role))}
+      ${reviewRow("Race", reviewDash(d.race))}
+      ${reviewRow("Gender", reviewDash(genderLabel(d.gender)))}
+      ${reviewRow("Pronouns", reviewDash(pronounText))}
+      ${reviewRow("Location", reviewDash(locationLabel(locations, d.location_id)))}
+      ${reviewRow("Speaking style", reviewList(d.voice))}
+      ${reviewRow("Personality", reviewList(d.personality))}
+      ${reviewRow("Public facts", reviewList(d.public_facts))}
+      ${reviewRow("Known facts", reviewList(d.known_facts))}
+      ${reviewRow("Secrets", reviewList(d.secrets))}
+      ${reviewRow("Stay in character", reviewDash(d.probes.stayInCharacter ? "Yes" : "No"))}
+      ${reviewRow("First person", reviewDash(d.probes.firstPerson ? "Yes" : "No"))}
+      ${reviewRow("Reveal style", reviewDash(d.probes.reveal))}
+      ${reviewRow("Combat attitude", reviewDash(d.probes.combat))}
+      ${reviewRow("Forbidden topics", reviewDash(d.probes.forbidden))}
+      ${reviewRow("Mannerism", reviewDash(d.probes.mannerism))}
+      ${reviewRow("Extra rules", reviewList(d.probes.customRules))}
+      ${reviewRow("Behavior rules (final)", reviewList(rules))}
+      <p class="notes"><em>TTS uses campaign editor defaults (no voice sample in Foundry).</em></p>
+    </div>`;
+}
+
+function locationReviewHtml(d) {
+  const subPlaces = (d.important_locations || [])
+    .map((p) => {
+      const name = String(p.name || "").trim();
+      if (!name) return "";
+      const desc = String(p.description || "").trim();
+      return desc ? `${name} — ${desc}` : name;
+    })
+    .filter(Boolean);
+  const rules = buildLocationKnowledgeRules(d.probes);
+  return `
+    <div class="npc-narrator-review">
+      ${reviewRow("Name", reviewDash(d.name))}
+      ${reviewRow("Type", reviewDash(d.type))}
+      ${reviewRow("Summary", reviewDash(d.summary))}
+      ${reviewRow("Local tone", reviewList(d.local_tone))}
+      ${reviewRow("Current events", reviewList(d.current_events))}
+      ${reviewRow("Sub-places", reviewList(subPlaces))}
+      ${reviewRow("Rumors", reviewList(d.rumors))}
+      ${reviewRow("Openness to strangers", reviewDash(d.probes.strangers))}
+      ${reviewRow("Rumor sharing", reviewDash(d.probes.rumors))}
+      ${reviewRow("Forbidden topics", reviewDash(d.probes.forbidden))}
+      ${reviewRow("What locals know", reviewDash(d.probes.localsKnow))}
+      ${reviewRow("Extra rules", reviewList(d.probes.customRules))}
+      ${reviewRow("Knowledge rules (final)", reviewList(rules))}
+    </div>`;
+}
+
 /**
  * @param {{ dialogWait: Function, title: string, steps: Array<{id:string,title:string,description:string,render:(draft:any)=>string,collect:(root:Element,draft:any)=>string|null}> }} options
  * @returns {Promise<object|null>}
@@ -367,18 +451,7 @@ export async function runNpcAuthoringWizard(deps) {
       id: "review",
       title: "Review",
       description: "Create this NPC in your NPC Narrator campaign.",
-      render: (d) => `
-        <div class="npc-narrator-review">
-          <p><strong>Name:</strong> ${escapeHtml(d.name)}</p>
-          <p><strong>Role:</strong> ${escapeHtml(d.role || "—")}</p>
-          <p><strong>Location:</strong> ${escapeHtml(d.location_id || "—")}</p>
-          <p><strong>Voice:</strong> ${escapeHtml(d.voice.join("; ") || "—")}</p>
-          <p><strong>Personality:</strong> ${escapeHtml(d.personality.join("; ") || "—")}</p>
-          <p><strong>Public facts:</strong> ${escapeHtml(d.public_facts.join("; ") || "—")}</p>
-          <p><strong>Known facts:</strong> ${escapeHtml(d.known_facts.join("; ") || "—")}</p>
-          <p><strong>Secrets:</strong> ${escapeHtml(d.secrets.join("; ") || "—")}</p>
-          <p><em>TTS uses campaign editor defaults (no voice sample in Foundry).</em></p>
-        </div>`,
+      render: (d) => npcReviewHtml(d, locations),
       collect: () => null,
     },
   ];
@@ -576,14 +649,7 @@ export async function runLocationAuthoringWizard(deps) {
       id: "review",
       title: "Review",
       description: "Create this location in your NPC Narrator campaign.",
-      render: (d) => `
-        <div class="npc-narrator-review">
-          <p><strong>Name:</strong> ${escapeHtml(d.name)}</p>
-          <p><strong>Type:</strong> ${escapeHtml(d.type)}</p>
-          <p><strong>Summary:</strong> ${escapeHtml(d.summary || "—")}</p>
-          <p><strong>Tone:</strong> ${escapeHtml(d.local_tone.join("; ") || "—")}</p>
-          <p><strong>Sub-places:</strong> ${escapeHtml(d.important_locations.map((p) => p.name).join("; ") || "—")}</p>
-        </div>`,
+      render: (d) => locationReviewHtml(d),
       collect: () => null,
     },
   ];
