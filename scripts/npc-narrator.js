@@ -3,6 +3,8 @@
  * Talks only to the Yaml Editor edge (never middleware directly).
  */
 
+import { runLocationAuthoringWizard, runNpcAuthoringWizard } from "./narrator-wizard.js";
+
 const MODULE_ID = "npc-narrator";
 const FLAG_SCOPE = MODULE_ID;
 
@@ -11,6 +13,8 @@ let hubConnection = null;
 let heartbeatTimer = null;
 let partyCharactersCache = null;
 let npcsCache = null;
+/** @type {Array<{id:string,name:string}>|null} */
+let locationsCache = null;
 
 function editorBaseUrl() {
   return String(game.settings.get(MODULE_ID, "editorBaseUrl") || "").replace(/\/+$/, "");
@@ -176,6 +180,7 @@ async function refreshCatalogs() {
   if (!session?.sessionToken) {
     partyCharactersCache = null;
     npcsCache = null;
+    locationsCache = null;
     return;
   }
   try {
@@ -186,6 +191,10 @@ async function refreshCatalogs() {
     const npcs = await apiFetch("/api/foundry/npcs");
     if (npcs.response.ok) {
       npcsCache = npcs.data?.npcs || [];
+    }
+    const locations = await apiFetch("/api/foundry/locations");
+    if (locations.response.ok) {
+      locationsCache = locations.data?.locations || [];
     }
   } catch (err) {
     console.warn(`${MODULE_ID} catalog refresh failed`, err);
@@ -254,6 +263,199 @@ async function setNpcOverride(actorId, npcId) {
   if (!npcId) delete map[actorId];
   else map[actorId] = npcId;
   await game.settings.set(MODULE_ID, "npcOverrides", map);
+}
+
+function getLocationMaps() {
+  return game.settings.get(MODULE_ID, "locationMaps") || {};
+}
+
+async function setLocationMap(sceneId, locationId) {
+  if (!sceneId) return;
+  if (!game.user.isGM) {
+    throw new Error("Only a GM can write Narrator location maps.");
+  }
+  const map = { ...getLocationMaps() };
+  if (!locationId) delete map[sceneId];
+  else map[sceneId] = locationId;
+  await game.settings.set(MODULE_ID, "locationMaps", map);
+}
+
+/** Strip simple HTML and collapse whitespace for wizard prefill. Non-strings are ignored. */
+function plainTextSeed(value, maxLen = 500) {
+  if (typeof value !== "string") return "";
+  const text = value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
+}
+
+function actorBiographySeed(actor) {
+  const sys = actor?.system || {};
+  // Prefer string fields only — never fall through to parent objects (avoids "[object Object]").
+  const candidates = [
+    sys.details?.biography?.value,
+    sys.details?.biography?.public,
+    sys.biography?.value,
+    sys.biography?.public,
+    sys.description?.value,
+    typeof sys.details?.biography === "string" ? sys.details.biography : null,
+    typeof sys.biography === "string" ? sys.biography : null,
+    typeof sys.description === "string" ? sys.description : null,
+  ];
+  for (const c of candidates) {
+    const text = plainTextSeed(c, 400);
+    if (text) return text;
+  }
+  return "";
+}
+
+function sceneSummarySeed(scene) {
+  try {
+    const journalId = scene?.journal;
+    if (!journalId) return "";
+    const journal = game.journal.get(journalId);
+    if (!journal) return "";
+
+    // Prefer the scene's linked page when set (not always contents[0]).
+    const pageId = scene.journalEntryPage || scene.journalPageId || null;
+    let page = null;
+    if (pageId) {
+      page = journal.pages?.get?.(pageId) || null;
+      if (!page && journal.pages?.contents) {
+        page = journal.pages.contents.find((p) => p.id === pageId) || null;
+      }
+    }
+    if (!page) {
+      page = journal.pages?.contents?.[0] || null;
+    }
+
+    const html = page?.text?.content || "";
+    return plainTextSeed(html, 2000);
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
+
+async function requireBoundSessionForAuthoring() {
+  if (!game.user.isGM) {
+    ui.notifications.error("Only a GM can create Narrator content from Foundry.");
+    return false;
+  }
+  if (!getSession()?.sessionToken) {
+    ui.notifications.warn("Bind the Foundry world to NPC Narrator before creating content.");
+    await openBindDialog();
+    return Boolean(getSession()?.sessionToken);
+  }
+  return true;
+}
+
+/**
+ * Create-only NPC wizard from an Actor. If already mapped, offers mapping UI instead of overwrite.
+ */
+async function openCreateNarratorNpcFromActor(actor) {
+  if (!actor) {
+    ui.notifications.warn("Open an Actor sheet first.");
+    return;
+  }
+  if (!(await requireBoundSessionForAuthoring())) return;
+
+  const existing = getNpcOverrides()[actor.id];
+  if (existing) {
+    const choice = await dialogWait({
+      title: "NPC Narrator — Already linked",
+      content: `
+        <div class="npc-narrator-dialog">
+          <p><strong>${escapeHtml(actor.name)}</strong> is already mapped to Narrator NPC <code>${escapeHtml(existing)}</code>.</p>
+          <p>Create-only wizards do not overwrite existing links. Open mapping to change the link, or clear it first.</p>
+        </div>`,
+      buttons: [
+        { action: "map", label: "Open mapping", icon: "fas fa-link", default: true, callback: () => "map" },
+        { action: "cancel", label: "Cancel" },
+      ],
+    });
+    if (choice === "map") await openActorNarratorMapping(actor);
+    return;
+  }
+
+  await refreshCatalogs();
+  const bio = actorBiographySeed(actor);
+  try {
+    const created = await runNpcAuthoringWizard({
+      dialogWait,
+      apiFetch,
+      locations: locationsCache || [],
+      seed: {
+        name: actor.name || "New NPC",
+        role: bio || "",
+      },
+      sourceLabel: `Foundry actor:${actor.id} ${actor.name || ""}`.trim(),
+    });
+    if (!created?.id) return;
+
+    await setNpcOverride(actor.id, created.id);
+    await refreshCatalogs();
+    ui.notifications.info(`NPC Narrator: created ${created.name || created.id} and mapped this actor.`);
+  } catch (err) {
+    ui.notifications.error(err.message || String(err));
+  }
+}
+
+/**
+ * Create-only Location wizard from a Scene. If already mapped, offers clear/cancel (no overwrite).
+ */
+async function openCreateNarratorLocationFromScene(scene) {
+  if (!scene) {
+    ui.notifications.warn("Select a Scene first.");
+    return;
+  }
+  if (!(await requireBoundSessionForAuthoring())) return;
+
+  const existing = getLocationMaps()[scene.id];
+  if (existing) {
+    const choice = await dialogWait({
+      title: "NPC Narrator — Already linked",
+      content: `
+        <div class="npc-narrator-dialog">
+          <p><strong>${escapeHtml(scene.name)}</strong> is already mapped to Narrator location <code>${escapeHtml(existing)}</code>.</p>
+          <p>Create-only wizards do not overwrite. Clear the map to create a new location for this scene.</p>
+        </div>`,
+      buttons: [
+        {
+          action: "clear",
+          label: "Clear map",
+          callback: () => "clear",
+        },
+        { action: "cancel", label: "Cancel", default: true },
+      ],
+    });
+    if (choice === "clear") {
+      await setLocationMap(scene.id, null);
+      ui.notifications.info("NPC Narrator: scene location map cleared.");
+    }
+    return;
+  }
+
+  try {
+    const created = await runLocationAuthoringWizard({
+      dialogWait,
+      apiFetch,
+      seed: {
+        name: scene.name || "New Location",
+        summary: sceneSummarySeed(scene),
+      },
+      sourceLabel: `Foundry scene:${scene.id} ${scene.name || ""}`.trim(),
+    });
+    if (!created?.id) return;
+
+    await setLocationMap(scene.id, created.id);
+    await refreshCatalogs();
+    ui.notifications.info(`NPC Narrator: created location ${created.name || created.id} and mapped this scene.`);
+  } catch (err) {
+    ui.notifications.error(err.message || String(err));
+  }
 }
 
 function guessPartyPlayerId(actor) {
@@ -568,6 +770,7 @@ async function unbindSession() {
   await setSession(null);
   partyCharactersCache = null;
   npcsCache = null;
+  locationsCache = null;
   ui.notifications.info("NPC Narrator: unbound from campaign.");
 }
 
@@ -805,6 +1008,61 @@ function tokenFromContextApplication(application, li) {
     li?.[0]?.dataset?.tokenId;
   if (tokenId && canvas.tokens?.get) return canvas.tokens.get(tokenId);
   return canvas.tokens?.hover || null;
+}
+
+/** Resolve directory entry id from ApplicationV2 HTMLElement (or legacy jQuery). */
+function directoryEntryId(target) {
+  const el = target?.dataset ? target : target?.[0];
+  if (!el) return null;
+  const ds = el.dataset || {};
+  return (
+    ds.documentId ||
+    ds.entryId ||
+    el.getAttribute?.("data-document-id") ||
+    el.getAttribute?.("data-entry-id") ||
+    null
+  );
+}
+
+function addActorDirectoryNarratorOptions(menuItems) {
+  menuItems.push(
+    {
+      name: "NPC Narrator: Map actor",
+      icon: '<i class="fas fa-theater-masks"></i>',
+      condition: (target) => {
+        const actor = game.actors.get(directoryEntryId(target));
+        return Boolean(actor && (actor.isOwner || game.user.isGM));
+      },
+      callback: async (target) => {
+        const actor = game.actors.get(directoryEntryId(target));
+        if (actor) await openActorNarratorMapping(actor);
+      },
+    },
+    {
+      name: "NPC Narrator: Create NPC…",
+      icon: '<i class="fas fa-wand-magic-sparkles"></i>',
+      condition: (target) => {
+        if (!game.user.isGM) return false;
+        return Boolean(game.actors.get(directoryEntryId(target)));
+      },
+      callback: async (target) => {
+        const actor = game.actors.get(directoryEntryId(target));
+        if (actor) await openCreateNarratorNpcFromActor(actor);
+      },
+    },
+  );
+}
+
+function addSceneDirectoryNarratorOptions(menuItems) {
+  menuItems.push({
+    name: "NPC Narrator: Create Location…",
+    icon: '<i class="fas fa-map-location-dot"></i>',
+    condition: (target) => game.user.isGM && Boolean(game.scenes.get(directoryEntryId(target))),
+    callback: async (target) => {
+      const scene = game.scenes.get(directoryEntryId(target));
+      if (scene) await openCreateNarratorLocationFromScene(scene);
+    },
+  });
 }
 
 function addTokenNarratorContextOptions(application, menuItems) {
@@ -1224,6 +1482,16 @@ function addActorSheetNarratorButton(buttons, actor) {
       void openActorNarratorMapping(actor);
     },
   });
+  if (game.user.isGM) {
+    buttons.unshift({
+      label: "Create Narrator NPC",
+      class: "npc-narrator-create-npc",
+      icon: "fas fa-wand-magic-sparkles",
+      onclick: () => {
+        void openCreateNarratorNpcFromActor(actor);
+      },
+    });
+  }
 }
 
 function addActorSheetV2NarratorControl(controls, actor) {
@@ -1234,6 +1502,26 @@ function addActorSheetV2NarratorControl(controls, actor) {
     label: "NPC Narrator",
     onClick: () => {
       void openActorNarratorMapping(actor);
+    },
+  });
+  if (game.user.isGM) {
+    controls.push({
+      icon: "fa-solid fa-wand-magic-sparkles",
+      label: "Create Narrator NPC",
+      onClick: () => {
+        void openCreateNarratorNpcFromActor(actor);
+      },
+    });
+  }
+}
+
+function addSceneNarratorCreateControl(controls, scene) {
+  if (!scene || !game.user.isGM) return;
+  controls.push({
+    icon: "fa-solid fa-map-location-dot",
+    label: "Create Narrator Location",
+    onClick: () => {
+      void openCreateNarratorLocationFromScene(scene);
     },
   });
 }
@@ -1463,6 +1751,15 @@ Hooks.once("init", () => {
     default: {},
   });
 
+  game.settings.register(MODULE_ID, "locationMaps", {
+    name: "Scene → Narrator Location maps",
+    hint: "Keyed by Foundry scene id after Create Narrator Location wizard.",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: {},
+  });
+
   game.keybindings.register(MODULE_ID, "chatTargetedNpc", {
     name: "Chat with targeted NPC",
     hint: "Opens Chat for the NPC token you have targeted (players usually cannot open the Token HUD on NPCs).",
@@ -1496,6 +1793,8 @@ Hooks.once("ready", async () => {
     },
     mapCharacter: openCharacterMapping,
     mapActor: openActorNarratorMapping,
+    createNpcFromActor: openCreateNarratorNpcFromActor,
+    createLocationFromScene: openCreateNarratorLocationFromScene,
     chat: () => promptMessageForTargetedNpc("chat"),
     whisper: () => promptMessageForTargetedNpc("whisper"),
     refresh: refreshCatalogs,
@@ -1543,25 +1842,22 @@ Hooks.on("getActorSheetHeaderButtons", (sheet, buttons) => {
 
 Hooks.on("getHeaderControlsApplicationV2", (app, controls) => {
   const doc = app.document;
-  if (!doc || doc.documentName !== "Actor") return;
-  addActorSheetV2NarratorControl(controls, doc);
+  if (!doc) return;
+  if (doc.documentName === "Actor") {
+    addActorSheetV2NarratorControl(controls, doc);
+    return;
+  }
+  if (doc.documentName === "Scene") {
+    addSceneNarratorCreateControl(controls, doc);
+  }
 });
 
-Hooks.on("getActorDirectoryEntryContext", (_html, options) => {
-  options.push({
-    name: "NPC Narrator: Map actor",
-    icon: '<i class="fas fa-theater-masks"></i>',
-    condition: (li) => {
-      const actorId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
-      const actor = game.actors.get(actorId);
-      return Boolean(actor && (actor.isOwner || game.user.isGM));
-    },
-    callback: async (li) => {
-      const actorId = li.data("documentId") || li.data("entryId") || li.attr("data-document-id");
-      const actor = game.actors.get(actorId);
-      if (actor) await openActorNarratorMapping(actor);
-    },
-  });
+Hooks.on("getActorContextOptions", (_application, menuItems) => {
+  addActorDirectoryNarratorOptions(menuItems);
+});
+
+Hooks.on("getSceneContextOptions", (_application, menuItems) => {
+  addSceneDirectoryNarratorOptions(menuItems);
 });
 
 Hooks.on("renderTokenHUD", (hud, html) => {
