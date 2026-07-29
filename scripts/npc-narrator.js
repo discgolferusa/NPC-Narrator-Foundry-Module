@@ -7,6 +7,7 @@ import { runLocationAuthoringWizard, runNpcAuthoringWizard } from "./narrator-wi
 
 const MODULE_ID = "npc-narrator";
 const FLAG_SCOPE = MODULE_ID;
+const DEFAULT_EDITOR_BASE_URL = "https://www.npcnarrator.com";
 
 /** @type {import("@microsoft/signalr").HubConnection | null} */
 let hubConnection = null;
@@ -17,11 +18,10 @@ let npcsCache = null;
 let locationsCache = null;
 
 function editorBaseUrl() {
-  return String(game.settings.get(MODULE_ID, "editorBaseUrl") || "").replace(/\/+$/, "");
-}
-
-function savedPairingCode() {
-  return String(game.settings.get(MODULE_ID, "pairingCode") || "").trim();
+  const configured = String(game.settings.get(MODULE_ID, "editorBaseUrl") || "")
+    .trim()
+    .replace(/\/+$/, "");
+  return configured || DEFAULT_EDITOR_BASE_URL;
 }
 
 function getSession() {
@@ -32,18 +32,6 @@ function getSession() {
 
 async function setSession(session) {
   await game.settings.set(MODULE_ID, "session", session || {});
-}
-
-async function clearSavedPairingCode() {
-  const current = savedPairingCode();
-  if (!current) return;
-  if (!game.npcNarrator) game.npcNarrator = {};
-  game.npcNarrator._clearingPairingCode = true;
-  try {
-    await game.settings.set(MODULE_ID, "pairingCode", "");
-  } finally {
-    game.npcNarrator._clearingPairingCode = false;
-  }
 }
 
 function authHeaders() {
@@ -740,8 +728,6 @@ async function bindWithPairingCode(pairingToken, options = {}) {
     expiresAt: sessionData.expires_at,
     deviceLabel: `Foundry ${game.world?.title || worldId}`,
   });
-
-  await clearSavedPairingCode();
 
   try {
     await refreshCatalogs();
@@ -1536,22 +1522,17 @@ async function openBindDialog() {
   const status = session
     ? `Bound to campaign <code>${escapeHtml(session.campaignId)}</code>`
     : "Not bound.";
-  const currentUrl = editorBaseUrl();
-  const currentCode = savedPairingCode();
+  const baseUrl = editorBaseUrl();
 
   const result = await dialogWait({
     title: "NPC Narrator — Bind world",
     content: `
       <div class="npc-narrator-dialog">
         <p class="npc-narrator-status ${session ? "ok" : ""}">${status}</p>
-        <p>Uses the Yaml Editor URL and pairing code from module settings (you can edit them here).</p>
-        <div class="form-group">
-          <label>Yaml Editor base URL</label>
-          <input type="text" name="editorUrl" id="npc-narrator-url" style="width:100%" value="${escapeHtml(currentUrl)}" placeholder="https://editor.example.com" />
-        </div>
+        <p class="notes">Editor: <code>${escapeHtml(baseUrl)}</code> (change under Module Settings if needed)</p>
         <div class="form-group">
           <label>Pairing code</label>
-          <input type="text" name="pairingCode" id="npc-narrator-pairing" style="width:100%" value="${escapeHtml(currentCode)}" placeholder="Paste pairing code" autocomplete="off" />
+          <input type="text" name="pairingCode" id="npc-narrator-pairing" style="width:100%" value="" placeholder="Paste pairing code from DM console" autocomplete="off" />
         </div>
       </div>`,
     buttons: [
@@ -1561,14 +1542,11 @@ async function openBindDialog() {
         icon: "fas fa-link",
         default: true,
         callback: (_event, button) => {
-          const urlEl =
-            button.form?.elements?.editorUrl || button.form?.querySelector?.("#npc-narrator-url");
           const codeEl =
             button.form?.elements?.pairingCode || button.form?.querySelector?.("#npc-narrator-pairing");
           return {
             action: "bind",
-            url: String(urlEl?.value || "").trim().replace(/\/+$/, ""),
-            code: String(codeEl?.value || "").trim() || savedPairingCode(),
+            code: String(codeEl?.value || "").trim(),
           };
         },
       },
@@ -1587,18 +1565,13 @@ async function openBindDialog() {
     return;
   }
   if (result?.action === "bind" || typeof result === "object") {
-    const url = result.url;
     const code = result.code;
-    if (!url) {
-      ui.notifications.error("Set the Yaml Editor base URL first.");
-      return;
-    }
     if (!code) {
-      ui.notifications.error("Paste a pairing code in settings or this dialog.");
+      ui.notifications.error("Paste a pairing code to bind.");
       return;
     }
     try {
-      await bindWithPairingCode(code, { baseUrl: url, persistUrl: true });
+      await bindWithPairingCode(code, { baseUrl: editorBaseUrl(), persistUrl: false });
       ui.notifications.info("NPC Narrator: world bound.");
     } catch (err) {
       console.error(`${MODULE_ID} bind failed`, err);
@@ -1608,8 +1581,7 @@ async function openBindDialog() {
 }
 
 /**
- * Configure Settings → Bind / Unbind.
- * Prefills from module settings so the pairing code does not need to be retyped.
+ * Configure Settings → Bind / Unbind — opens the pairing-code dialog.
  */
 class NpcNarratorPairingMenu extends FormApplication {
   static get defaultOptions() {
@@ -1618,108 +1590,35 @@ class NpcNarratorPairingMenu extends FormApplication {
       title: "NPC Narrator — Campaign pairing",
       classes: ["npc-narrator-dialog"],
       template: `modules/${MODULE_ID}/templates/pairing.hbs`,
-      width: 520,
+      width: 480,
       height: "auto",
-      closeOnSubmit: false,
+      closeOnSubmit: true,
       submitOnChange: false,
     });
   }
 
-  getData() {
-    const session = getSession();
-    const campaignId = session?.campaignId
-      ? String(session.campaignId).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;")
-      : "";
-    return {
-      editorBaseUrl: editorBaseUrl(),
-      pairingCode: savedPairingCode(),
-      statusHtml: session
-        ? `Bound to campaign <code>${campaignId}</code>`
-        : "Not bound to a campaign yet.",
-      bound: Boolean(session?.sessionToken),
-    };
-  }
-
-  activateListeners(html) {
-    super.activateListeners(html);
-    html.find(".npc-narrator-unbind").on("click", async (event) => {
-      event.preventDefault();
-      await unbindSession();
-      this.render(true);
-    });
-  }
-
-  async _updateObject(_event, formData) {
-    const data = foundry.utils.expandObject?.(formData) ?? formData;
-    const url = String(data.editorBaseUrl ?? formData.editorBaseUrl ?? "").trim().replace(/\/+$/, "");
-    const code = String(data.pairingCode ?? formData.pairingCode ?? "").trim() || savedPairingCode();
-
-    if (!url) {
-      ui.notifications.error("Set the Yaml Editor base URL first.");
-      return;
-    }
-    if (!code) {
-      ui.notifications.error("Enter a pairing code (module settings or this form).");
-      return;
-    }
-
-    try {
-      await game.settings.set(MODULE_ID, "editorBaseUrl", url);
-      await game.settings.set(MODULE_ID, "pairingCode", code);
-      await bindWithPairingCode(code, { baseUrl: url, persistUrl: false });
-      ui.notifications.info("NPC Narrator: world bound.");
-      this.render(true);
-    } catch (err) {
-      console.error(`${MODULE_ID} bind failed`, err);
-      ui.notifications.error(err.message || String(err));
-    }
+  /** @override Open the bind dialog instead of a settings form. */
+  async render(_force, _options = {}) {
+    await openBindDialog();
+    return this;
   }
 }
 
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "editorBaseUrl", {
     name: "Yaml Editor base URL",
-    hint: "HTTPS origin of NPC Yaml Editor (no trailing slash), e.g. https://editor.example.com",
+    hint: "HTTPS origin of NPC Narrator (no trailing slash). Defaults to https://www.npcnarrator.com.",
     scope: "world",
     config: true,
     type: String,
-    default: "",
+    default: DEFAULT_EDITOR_BASE_URL,
     restricted: true,
-  });
-
-  game.settings.register(MODULE_ID, "pairingCode", {
-    name: "Pairing code",
-    hint: "Paste the one-time code from the DM console, then open Campaign pairing → Bind / Unbind (or Save Changes to bind immediately).",
-    scope: "world",
-    config: true,
-    type: String,
-    default: "",
-    restricted: true,
-    onChange: (value) => {
-      if (!game.ready || !game.user?.isGM) return;
-      const code = String(value || "").trim();
-      if (!code) return;
-      if (game.npcNarrator?._clearingPairingCode) return;
-      void (async () => {
-        try {
-          if (!editorBaseUrl()) {
-            ui.notifications.error("Set Yaml Editor base URL before pairing.");
-            return;
-          }
-          await bindWithPairingCode(code);
-          ui.notifications.info("NPC Narrator: world bound from settings.");
-        } catch (err) {
-          console.error(`${MODULE_ID} settings bind failed`, err);
-          ui.notifications.error(err.message || String(err));
-        }
-      })();
-    },
   });
 
   game.settings.registerMenu(MODULE_ID, "pairingMenu", {
     name: "Campaign pairing",
     label: "Bind / Unbind",
-    hint: "Opens the bind form prefilled from the URL and pairing code settings above.",
+    hint: "Paste a one-time pairing code from the DM console to bind this world (or unbind).",
     icon: "fas fa-link",
     type: NpcNarratorPairingMenu,
     restricted: true,
