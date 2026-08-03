@@ -4,6 +4,13 @@
  */
 
 import { runLocationAuthoringWizard, runNpcAuthoringWizard } from "./narrator-wizard.js";
+import {
+  bestNameMatch as bestNameMatchPure,
+  chatAlreadyPosted as chatAlreadyPostedPure,
+  escapeHtml,
+  plainTextSeed,
+  whisperTargets as whisperTargetsPure,
+} from "./narrator-pure.js";
 
 const MODULE_ID = "npc-narrator";
 const FLAG_SCOPE = MODULE_ID;
@@ -16,6 +23,10 @@ let partyCharactersCache = null;
 let npcsCache = null;
 /** @type {Array<{id:string,name:string}>|null} */
 let locationsCache = null;
+
+function bestNameMatch(name, items, nameKey = "name") {
+  return bestNameMatchPure(name, items, nameKey);
+}
 
 function editorBaseUrl() {
   const configured = String(game.settings.get(MODULE_ID, "editorBaseUrl") || "")
@@ -58,35 +69,6 @@ async function apiFetch(path, options = {}) {
     data = { raw: text };
   }
   return { response, data };
-}
-
-function normalizeName(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function nameMatchScore(a, b) {
-  const left = normalizeName(a);
-  const right = normalizeName(b);
-  if (!left || !right) return 0;
-  if (left === right) return 100;
-  if (left.includes(right) || right.includes(left)) return 80;
-  return 0;
-}
-
-function bestNameMatch(name, items, nameKey = "name") {
-  let best = null;
-  let bestScore = 0;
-  for (const item of items || []) {
-    const score = nameMatchScore(name, item[nameKey]);
-    if (score > bestScore) {
-      bestScore = score;
-      best = item;
-    }
-  }
-  return bestScore >= 80 ? best : null;
 }
 
 async function ensureSignalR() {
@@ -268,16 +250,7 @@ async function setLocationMap(sceneId, locationId) {
   await game.settings.set(MODULE_ID, "locationMaps", map);
 }
 
-/** Strip simple HTML and collapse whitespace for wizard prefill. Non-strings are ignored. */
-function plainTextSeed(value, maxLen = 500) {
-  if (typeof value !== "string") return "";
-  const text = value
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!text) return "";
-  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
-}
+/** Strip simple HTML and collapse whitespace for wizard prefill — see narrator-pure.js. */
 
 function actorBiographySeed(actor) {
   const sys = actor?.system || {};
@@ -500,19 +473,11 @@ function resolveNpcIdForToken(token) {
 }
 
 function whisperTargets(foundryUserId) {
-  const ids = new Set();
-  if (foundryUserId) ids.add(foundryUserId);
-  for (const user of game.users) {
-    if (user.isGM) ids.add(user.id);
-  }
-  return [...ids];
+  return whisperTargetsPure(foundryUserId, game.users);
 }
 
 function chatAlreadyPosted(requestId, role) {
-  if (!requestId || !role || !game.messages) return false;
-  return game.messages.contents.some(
-    (m) => m.getFlag?.(MODULE_ID, "requestId") === requestId && m.getFlag?.(MODULE_ID, "role") === role
-  );
+  return chatAlreadyPostedPure(requestId, role, game.messages?.contents, MODULE_ID);
 }
 
 async function postChatLine({ content, alias, role, visibility, foundryUserId, requestId }) {
@@ -1121,14 +1086,6 @@ function registerTokenLayerNarratorTools(controls) {
     if (!Array.isArray(tokenControl.tools)) tokenControl.tools = [];
     tokenControl.tools.push(chatTool, whisperTool);
   }
-}
-
-function escapeHtml(text) {
-  return String(text ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function eventClientPoint(event) {
