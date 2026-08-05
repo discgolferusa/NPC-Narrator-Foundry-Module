@@ -73,3 +73,18 @@ export function chatAlreadyPosted(requestId, role, messages, moduleId) {
     (m) => m.getFlag?.(moduleId, "requestId") === requestId && m.getFlag?.(moduleId, "role") === role,
   );
 }
+
+/**
+ * Defense-in-depth: ignore SignalR captions that are not for this world's bound campaign.
+ * @param {{campaign_id?: string|null}|null|undefined} payload
+ * @param {{campaignId?: string|null}|null|undefined} session
+ */
+export function shouldAcceptCampaignText(payload, session) {
+  const bound = String(session?.campaignId || "").trim();
+  if (!bound) return false;
+  const incoming = String(payload?.campaign_id || "").trim();
+  // Missing campaign_id on legacy payloads: allow only when we have a bound session
+  // and treat empty as "same channel" (server always joins the session campaign).
+  if (!incoming) return true;
+  return incoming.toLowerCase() === bound.toLowerCase();
+}

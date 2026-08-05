@@ -6,6 +6,7 @@ import {
   nameMatchScore,
   normalizeName,
   plainTextSeed,
+  shouldAcceptCampaignText,
   whisperTargets,
 } from "../scripts/narrator-pure.js";
 
@@ -66,5 +67,15 @@ describe("whisperTargets / chatAlreadyPosted", () => {
     expect(chatAlreadyPosted("req-1", "npc", messages, "npc-narrator")).toBe(true);
     expect(chatAlreadyPosted("req-1", "narrator", messages, "npc-narrator")).toBe(false);
     expect(chatAlreadyPosted("", "npc", messages, "npc-narrator")).toBe(false);
+  });
+});
+
+describe("shouldAcceptCampaignText", () => {
+  it("rejects other campaigns and unbound sessions", () => {
+    expect(shouldAcceptCampaignText({ campaign_id: "a" }, null)).toBe(false);
+    expect(shouldAcceptCampaignText({ campaign_id: "other" }, { campaignId: "bound" })).toBe(false);
+    expect(shouldAcceptCampaignText({ campaign_id: "Bound" }, { campaignId: "bound" })).toBe(true);
+    expect(shouldAcceptCampaignText({ campaign_id: "Bound" }, { campaignId: "bound" })).toBe(true);
+    expect(shouldAcceptCampaignText({}, { campaignId: "bound" })).toBe(true);
   });
 });

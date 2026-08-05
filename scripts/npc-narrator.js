@@ -9,6 +9,7 @@ import {
   chatAlreadyPosted as chatAlreadyPostedPure,
   escapeHtml,
   plainTextSeed,
+  shouldAcceptCampaignText,
   whisperTargets as whisperTargetsPure,
 } from "./narrator-pure.js";
 
@@ -562,6 +563,9 @@ async function postTurnRepliesToChat(data, visibility, foundryUserId, requestId)
 
 async function handleCampaignText(payload) {
   if (!payload) return;
+  if (!shouldAcceptCampaignText(payload, getSession())) {
+    return;
+  }
   const visibility = payload.visibility || "chat";
   const foundryUserId = payload.foundry_user_id || null;
   const requestId = payload.request_id || null;
@@ -1658,10 +1662,14 @@ Hooks.once("ready", async () => {
   };
 
   const session = getSession();
+  // Only the GM joins SignalR so one foundry presence slot owns captions for the bound campaign.
+  // Players still send HTTP turns and see chat via Foundry ChatMessage sync.
   if (session?.sessionToken) {
     try {
       await refreshCatalogs();
-      await startHub();
+      if (game.user.isGM) {
+        await startHub();
+      }
     } catch (err) {
       console.warn(`${MODULE_ID} reconnect failed`, err);
       ui.notifications.warn("NPC Narrator: could not reconnect. Re-bind if the session expired.");
