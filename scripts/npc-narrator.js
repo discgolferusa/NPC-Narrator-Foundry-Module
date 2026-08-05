@@ -10,6 +10,7 @@ import {
   escapeHtml,
   plainTextSeed,
   shouldAcceptCampaignText,
+  shouldOwnFoundryHub,
   whisperTargets as whisperTargetsPure,
 } from "./narrator-pure.js";
 
@@ -106,6 +107,10 @@ async function startHub() {
   const session = getSession();
   const base = editorBaseUrl();
   if (!session?.sessionToken || !base) return;
+  // Co-GMs must not JoinAsFoundry — only Foundry's activeGM owns the presence slot.
+  if (!shouldOwnFoundryHub(game.user, game.users?.activeGM)) {
+    return;
+  }
 
   await ensureSignalR();
   await stopHub();
@@ -144,6 +149,25 @@ async function startHub() {
   }, 30000);
 
   ui.notifications.info("NPC Narrator: connected to campaign channel.");
+}
+
+/**
+ * Ensure only the active GM client holds JoinAsFoundry for this world session.
+ * Call on ready, after bind, and when GM connectivity changes.
+ */
+async function reconcileFoundryHub() {
+  const session = getSession();
+  if (!session?.sessionToken) {
+    await stopHub();
+    return;
+  }
+  if (shouldOwnFoundryHub(game.user, game.users?.activeGM)) {
+    if (!hubConnection) {
+      await startHub();
+    }
+    return;
+  }
+  await stopHub();
 }
 
 async function refreshCatalogs() {
@@ -705,7 +729,7 @@ async function bindWithPairingCode(pairingToken, options = {}) {
   }
 
   try {
-    await startHub();
+    await reconcileFoundryHub();
   } catch (err) {
     console.warn(`${MODULE_ID} SignalR connect after bind failed`, err);
     ui.notifications.warn(
@@ -1662,19 +1686,23 @@ Hooks.once("ready", async () => {
   };
 
   const session = getSession();
-  // Only the GM joins SignalR so one foundry presence slot owns captions for the bound campaign.
-  // Players still send HTTP turns and see chat via Foundry ChatMessage sync.
+  // Only Foundry's activeGM joins SignalR so co-GMs cannot flap the foundry presence slot.
+  // Players (and other GMs) still send HTTP turns; chat syncs via Foundry ChatMessage.
   if (session?.sessionToken) {
     try {
       await refreshCatalogs();
-      if (game.user.isGM) {
-        await startHub();
-      }
+      await reconcileFoundryHub();
     } catch (err) {
       console.warn(`${MODULE_ID} reconnect failed`, err);
       ui.notifications.warn("NPC Narrator: could not reconnect. Re-bind if the session expired.");
     }
   }
+
+  Hooks.on("userConnected", () => {
+    void reconcileFoundryHub().catch((err) => {
+      console.warn(`${MODULE_ID} hub reconcile after userConnected failed`, err);
+    });
+  });
 
   // Migrate legacy user flag / name guess → actor-id map (GM: world; players: user flag).
   const assigned = game.user.character;

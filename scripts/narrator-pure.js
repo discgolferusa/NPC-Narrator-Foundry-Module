@@ -88,3 +88,20 @@ export function shouldAcceptCampaignText(payload, session) {
   if (!incoming) return true;
   return incoming.toLowerCase() === bound.toLowerCase();
 }
+
+/**
+ * Exactly one Foundry client may JoinAsFoundry. Prefer Foundry's activeGM so co-GMs
+ * do not flap the single foundry presence slot or double-post captions.
+ *
+ * @param {{id?: string, isGM?: boolean}|null|undefined} localUser
+ * @param {{id?: string}|null|undefined} activeGm game.users.activeGM
+ */
+export function shouldOwnFoundryHub(localUser, activeGm) {
+  if (!localUser?.isGM) return false;
+  const localId = String(localUser.id || "").trim();
+  if (!localId) return false;
+  const activeId = String(activeGm?.id || "").trim();
+  // No activeGM yet (rare race during ready): allow only if we are a GM and nothing else is designated.
+  if (!activeId) return true;
+  return localId === activeId;
+}

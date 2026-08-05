@@ -7,6 +7,7 @@ import {
   normalizeName,
   plainTextSeed,
   shouldAcceptCampaignText,
+  shouldOwnFoundryHub,
   whisperTargets,
 } from "../scripts/narrator-pure.js";
 
@@ -77,5 +78,14 @@ describe("shouldAcceptCampaignText", () => {
     expect(shouldAcceptCampaignText({ campaign_id: "Bound" }, { campaignId: "bound" })).toBe(true);
     expect(shouldAcceptCampaignText({ campaign_id: "Bound" }, { campaignId: "bound" })).toBe(true);
     expect(shouldAcceptCampaignText({}, { campaignId: "bound" })).toBe(true);
+  });
+});
+
+describe("shouldOwnFoundryHub", () => {
+  it("allows only the active GM among co-GMs", () => {
+    expect(shouldOwnFoundryHub({ id: "p1", isGM: false }, { id: "gm1" })).toBe(false);
+    expect(shouldOwnFoundryHub({ id: "gm2", isGM: true }, { id: "gm1" })).toBe(false);
+    expect(shouldOwnFoundryHub({ id: "gm1", isGM: true }, { id: "gm1" })).toBe(true);
+    expect(shouldOwnFoundryHub({ id: "gm1", isGM: true }, null)).toBe(true);
   });
 });
