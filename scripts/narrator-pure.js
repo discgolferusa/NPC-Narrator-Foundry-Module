@@ -90,6 +90,19 @@ export function shouldAcceptCampaignText(payload, session) {
 }
 
 /**
+ * Foundry `/npc-turn` already posts player + narrator + NPC lines from the HTTP JSON.
+ * SignalR still fans those captions out (for Discord/browser), but Foundry must not
+ * ChatMessage.create them again or the table sees replies twice (and often before the question).
+ *
+ * @param {{source?: string|null}|null|undefined} payload
+ */
+export function shouldMirrorCampaignTextToFoundryChat(payload) {
+  const source = String(payload?.source || "").trim().toLowerCase();
+  if (source === "foundry_npc_turn") return false;
+  return true;
+}
+
+/**
  * Exactly one Foundry client may JoinAsFoundry. Prefer Foundry's activeGM so co-GMs
  * do not flap the single foundry presence slot or double-post captions.
  *
@@ -104,4 +117,75 @@ export function shouldOwnFoundryHub(localUser, activeGm) {
   // No activeGM yet (rare race during ready): allow only if we are a GM and nothing else is designated.
   if (!activeId) return true;
   return localId === activeId;
+}
+
+/** Foundry core icon used for Narrator chat lines (not the speaking player's avatar). */
+export const NARRATOR_CHAT_PORTRAIT = "icons/svg/book.svg";
+
+/**
+ * Resolve which Foundry actor should speak for an NPC catalog id / name.
+ * Prefers explicit actor→npc overrides, then name match.
+ *
+ * @param {string|null|undefined} npcId
+ * @param {string|null|undefined} npcName
+ * @param {Record<string,string>|null|undefined} actorIdToNpcId
+ * @param {Iterable<{id:string,name?:string,img?:string}>} actors
+ */
+export function findActorForNpc(npcId, npcName, actorIdToNpcId, actors) {
+  const wanted = String(npcId || "").trim();
+  const map = actorIdToNpcId || {};
+  if (wanted) {
+    for (const [actorId, mapped] of Object.entries(map)) {
+      if (String(mapped || "").trim() === wanted) {
+        const hit = [...(actors || [])].find((a) => a?.id === actorId);
+        if (hit) return hit;
+      }
+    }
+  }
+  if (npcName) {
+    return bestNameMatch(npcName, actors || [], "name");
+  }
+  return null;
+}
+
+/**
+ * Portrait URL for a chat line. NPC → actor/token img; narrator → system default.
+ *
+ * @param {"narrator"|"npc"|string} role
+ * @param {{img?: string, prototypeToken?: {texture?: {src?: string}}}|null|undefined} actor
+ */
+export function resolveChatPortraitSrc(role, actor) {
+  if (role === "narrator") {
+    return NARRATOR_CHAT_PORTRAIT;
+  }
+  if (role === "npc" && actor) {
+    const tokenSrc = actor.prototypeToken?.texture?.src;
+    const img = String(actor.img || tokenSrc || "").trim();
+    if (img) return img;
+  }
+  return null;
+}
+
+/**
+ * Apply a portrait URL onto a rendered Foundry chat message header.
+ * @param {ParentNode|null|undefined} root
+ * @param {string|null|undefined} src
+ */
+export function applyChatPortraitSrc(root, src) {
+  const url = String(src || "").trim();
+  if (!root || !url) return false;
+  const img =
+    root.querySelector?.("img.avatar")
+    || root.querySelector?.("a.avatar img")
+    || root.querySelector?.(".message-header img");
+  if (img) {
+    img.setAttribute("src", url);
+    return true;
+  }
+  const avatar = root.querySelector?.("a.avatar, .avatar");
+  if (avatar) {
+    avatar.style.backgroundImage = `url("${url}")`;
+    return true;
+  }
+  return false;
 }

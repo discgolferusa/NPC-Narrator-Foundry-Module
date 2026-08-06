@@ -6,7 +6,12 @@ import {
   nameMatchScore,
   normalizeName,
   plainTextSeed,
+  applyChatPortraitSrc,
+  findActorForNpc,
+  NARRATOR_CHAT_PORTRAIT,
+  resolveChatPortraitSrc,
   shouldAcceptCampaignText,
+  shouldMirrorCampaignTextToFoundryChat,
   shouldOwnFoundryHub,
   whisperTargets,
 } from "../scripts/narrator-pure.js";
@@ -81,11 +86,58 @@ describe("shouldAcceptCampaignText", () => {
   });
 });
 
+describe("shouldMirrorCampaignTextToFoundryChat", () => {
+  it("skips foundry_npc_turn captions already posted from the HTTP turn", () => {
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "foundry_npc_turn" })).toBe(false);
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "FOUNDRY_NPC_TURN" })).toBe(false);
+  });
+
+  it("still mirrors Discord/browser/other caption sources into Foundry chat", () => {
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "discord_npc_turn" })).toBe(true);
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "dm_voice_turn" })).toBe(true);
+    expect(shouldMirrorCampaignTextToFoundryChat({})).toBe(true);
+  });
+});
+
 describe("shouldOwnFoundryHub", () => {
   it("allows only the active GM among co-GMs", () => {
     expect(shouldOwnFoundryHub({ id: "p1", isGM: false }, { id: "gm1" })).toBe(false);
     expect(shouldOwnFoundryHub({ id: "gm2", isGM: true }, { id: "gm1" })).toBe(false);
     expect(shouldOwnFoundryHub({ id: "gm1", isGM: true }, { id: "gm1" })).toBe(true);
     expect(shouldOwnFoundryHub({ id: "gm1", isGM: true }, null)).toBe(true);
+  });
+});
+
+describe("chat portraits", () => {
+  it("finds actor by override then name", () => {
+    const actors = [
+      { id: "a1", name: "Innkeeper Marta", img: "actors/marta.webp" },
+      { id: "a2", name: "Guard", img: "actors/guard.webp" },
+    ];
+    expect(findActorForNpc("inn_1", null, { a1: "inn_1" }, actors)?.id).toBe("a1");
+    expect(findActorForNpc(null, "Guard", {}, actors)?.id).toBe("a2");
+  });
+
+  it("uses system narrator icon and actor img for npc", () => {
+    expect(resolveChatPortraitSrc("narrator", null)).toBe(NARRATOR_CHAT_PORTRAIT);
+    expect(resolveChatPortraitSrc("npc", { img: "path/npc.webp" })).toBe("path/npc.webp");
+    expect(resolveChatPortraitSrc("npc", { prototypeToken: { texture: { src: "tok.webp" } } })).toBe(
+      "tok.webp",
+    );
+  });
+
+  it("applies portrait src onto chat header img", () => {
+    const img = { setAttribute() {}, _src: null };
+    img.setAttribute = (k, v) => {
+      if (k === "src") img._src = v;
+    };
+    const root = {
+      querySelector(sel) {
+        if (sel.includes("img")) return img;
+        return null;
+      },
+    };
+    expect(applyChatPortraitSrc(root, "icons/svg/book.svg")).toBe(true);
+    expect(img._src).toBe("icons/svg/book.svg");
   });
 });

@@ -9,7 +9,12 @@ import {
   chatAlreadyPosted as chatAlreadyPostedPure,
   escapeHtml,
   plainTextSeed,
+  applyChatPortraitSrc,
+  findActorForNpc,
+  NARRATOR_CHAT_PORTRAIT,
+  resolveChatPortraitSrc,
   shouldAcceptCampaignText,
+  shouldMirrorCampaignTextToFoundryChat,
   shouldOwnFoundryHub,
   whisperTargets as whisperTargetsPure,
 } from "./narrator-pure.js";
@@ -505,7 +510,42 @@ function chatAlreadyPosted(requestId, role) {
   return chatAlreadyPostedPure(requestId, role, game.messages?.contents, MODULE_ID);
 }
 
-async function postChatLine({ content, alias, role, visibility, foundryUserId, requestId }) {
+function resolveActorForNpcChat(npcId, npcName) {
+  return findActorForNpc(npcId, npcName, getNpcOverrides(), game.actors?.contents || []);
+}
+
+function buildChatSpeaker(alias, actor) {
+  if (actor && typeof ChatMessage?.getSpeaker === "function") {
+    try {
+      const speaker = ChatMessage.getSpeaker({ actor });
+      return { ...speaker, alias: alias || speaker.alias || actor.name };
+    } catch {
+      // fall through
+    }
+  }
+  if (actor?.id) {
+    return { alias: alias || actor.name || "NPC", actor: actor.id };
+  }
+  return { alias: alias || "NPC" };
+}
+
+function applyNarratorChatPortrait(message, root) {
+  const role = message?.getFlag?.(MODULE_ID, "role");
+  const flagged = message?.getFlag?.(MODULE_ID, "portraitSrc");
+  let src = flagged || null;
+  if (!src && role === "narrator") {
+    src = NARRATOR_CHAT_PORTRAIT;
+  }
+  if (!src && role === "npc") {
+    const actor =
+      message?.speakerActor
+      || (message?.speaker?.actor ? game.actors.get(message.speaker.actor) : null);
+    src = resolveChatPortraitSrc("npc", actor);
+  }
+  applyChatPortraitSrc(root, src);
+}
+
+async function postChatLine({ content, alias, role, visibility, foundryUserId, requestId, npcId, npcName }) {
   if (!content?.trim()) return;
   if (requestId && role && chatAlreadyPosted(requestId, role)) return;
 
@@ -516,13 +556,19 @@ async function postChatLine({ content, alias, role, visibility, foundryUserId, r
     body = `<em class="npc-narrator-narration">${body}</em>`;
   }
 
+  const actor = role === "npc" ? resolveActorForNpcChat(npcId, npcName || alias) : null;
+  const portraitSrc = resolveChatPortraitSrc(role, actor) || (role === "narrator" ? NARRATOR_CHAT_PORTRAIT : null);
+  const speakerAlias = alias || (role === "narrator" ? "Narrator" : actor?.name || "NPC");
+
   const data = {
     content: body,
-    speaker: { alias: alias || (role === "narrator" ? "Narrator" : "NPC") },
+    speaker: buildChatSpeaker(speakerAlias, actor),
     flags: {
       [MODULE_ID]: {
         role: role || "other",
         requestId: requestId || null,
+        portraitSrc: portraitSrc || null,
+        npcId: npcId || null,
       },
     },
   };
@@ -562,6 +608,7 @@ async function postTurnRepliesToChat(data, visibility, foundryUserId, requestId)
   const narration = String(data.narration_text || "").trim();
   const dialogue = String(data.dialogue_text || data.npc_text || "").trim();
   const npcName = String(data.npc_name || "NPC").trim() || "NPC";
+  const npcId = String(data.npc_id || "").trim() || null;
 
   if (narration) {
     await postChatLine({
@@ -581,6 +628,8 @@ async function postTurnRepliesToChat(data, visibility, foundryUserId, requestId)
       visibility,
       foundryUserId,
       requestId: rid,
+      npcId,
+      npcName,
     });
   }
 }
@@ -590,9 +639,15 @@ async function handleCampaignText(payload) {
   if (!shouldAcceptCampaignText(payload, getSession())) {
     return;
   }
+  // Local sendNpcTurn already wrote these lines from the /npc-turn response.
+  if (!shouldMirrorCampaignTextToFoundryChat(payload)) {
+    return;
+  }
   const visibility = payload.visibility || "chat";
   const foundryUserId = payload.foundry_user_id || null;
   const requestId = payload.request_id || null;
+  const npcId = payload.npc_id || null;
+  const npcName = payload.npc_name || null;
 
   if (visibility === "whisper" && foundryUserId && foundryUserId !== game.user.id && !game.user.isGM) {
     return;
@@ -623,6 +678,8 @@ async function handleCampaignText(payload) {
       visibility,
       foundryUserId,
       requestId,
+      npcId,
+      npcName,
     });
     return;
   }
@@ -646,6 +703,8 @@ async function handleCampaignText(payload) {
       visibility,
       foundryUserId,
       requestId,
+      npcId,
+      npcName,
     });
   } else if (payload.npc_text && !payload.narration_text) {
     await postChatLine({
@@ -655,6 +714,8 @@ async function handleCampaignText(payload) {
       visibility,
       foundryUserId,
       requestId,
+      npcId,
+      npcName,
     });
   }
 }
@@ -763,6 +824,18 @@ async function sendNpcTurn({ text, npcId, visibility }) {
   }
 
   const requestId = foundry.utils.randomID?.() || crypto.randomUUID();
+
+  // Post the question first so chat order is player → narrator → NPC (SignalR captions
+  // for foundry_npc_turn are ignored; replies come from the HTTP JSON below).
+  await postChatLine({
+    content: text,
+    alias: game.user.character?.name || game.user.name,
+    role: "player",
+    visibility,
+    foundryUserId: game.user.id,
+    requestId,
+  });
+
   const { response, data } = await apiFetch("/api/foundry/npc-turn", {
     method: "POST",
     body: JSON.stringify({
@@ -779,15 +852,6 @@ async function sendNpcTurn({ text, npcId, visibility }) {
     throw new Error(data?.error || `NPC turn failed (${response.status})`);
   }
 
-  // Always post into Foundry chat so everyone sees public turns (and whispers stay private).
-  await postChatLine({
-    content: text,
-    alias: game.user.character?.name || game.user.name,
-    role: "player",
-    visibility,
-    foundryUserId: game.user.id,
-    requestId,
-  });
   await postTurnRepliesToChat(data, visibility, game.user.id, requestId);
 
   return data;
@@ -1777,6 +1841,16 @@ Hooks.on("getTokenContextOptions", (application, menuItems) => {
 // Token layer buttons: target an NPC, then click Chat/Whisper in the left toolbar.
 Hooks.on("getSceneControlButtons", (controls) => {
   registerTokenLayerNarratorTools(controls);
+});
+
+// Swap Narrator/NPC chat avatars off the speaking player's portrait.
+Hooks.on("renderChatMessageHTML", (message, html) => {
+  applyNarratorChatPortrait(message, html);
+});
+// Legacy hook still used by some systems / older builds.
+Hooks.on("renderChatMessage", (message, html) => {
+  const root = html?.[0] || html;
+  applyNarratorChatPortrait(message, root);
 });
 
 Hooks.on("chatMessage", (_log, message) => {
