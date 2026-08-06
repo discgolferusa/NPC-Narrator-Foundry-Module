@@ -105,8 +105,8 @@ export function shouldMirrorCampaignTextToFoundryChat(payload) {
 }
 
 /**
- * Stable fingerprint so two clients posting the same Narrator/NPC line can dedupe
- * even when request_id is missing on one path.
+ * Fingerprint for near-term duplicate suppression (SignalR vs HTTP race).
+ * Role+text only — must be paired with a short time window, never whole-log scan.
  *
  * @param {string|null|undefined} role
  * @param {string|null|undefined} content
@@ -122,14 +122,29 @@ export function chatLineFingerprint(role, content) {
   return `${r}::${text}`;
 }
 
+/** Default window for fingerprint dedupe — covers SignalR/HTTP races, not session history. */
+export const CHAT_FINGERPRINT_MAX_AGE_MS = 20_000;
+
 /**
+ * True only if the same fingerprint was posted recently (not anywhere in world history).
+ *
  * @param {string|null|undefined} fingerprint
- * @param {{getFlag?: Function}[]} messages
+ * @param {{getFlag?: Function, timestamp?: number}[]} messages
  * @param {string} moduleId
+ * @param {{ nowMs?: number, maxAgeMs?: number }} [options]
  */
-export function chatFingerprintAlreadyPosted(fingerprint, messages, moduleId) {
+export function chatFingerprintAlreadyPosted(fingerprint, messages, moduleId, options = {}) {
   if (!fingerprint || !messages) return false;
-  return messages.some((m) => m.getFlag?.(moduleId, "fingerprint") === fingerprint);
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const maxAgeMs = Number.isFinite(options.maxAgeMs) ? options.maxAgeMs : CHAT_FINGERPRINT_MAX_AGE_MS;
+  const oldest = nowMs - maxAgeMs;
+  return messages.some((m) => {
+    if (m.getFlag?.(moduleId, "fingerprint") !== fingerprint) return false;
+    const ts = Number(m.timestamp);
+    // Missing/invalid timestamps are ignored so ancient undated lines cannot block forever.
+    if (!Number.isFinite(ts)) return false;
+    return ts >= oldest && ts <= nowMs + 1000;
+  });
 }
 
 /**

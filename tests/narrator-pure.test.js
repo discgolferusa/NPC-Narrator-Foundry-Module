@@ -113,19 +113,47 @@ describe("chatLineFingerprint", () => {
     expect(chatLineFingerprint("npc", "Hello world")).not.toBe(a);
   });
 
-  it("detects fingerprint already on a chat message", () => {
+  it("only treats matching fingerprints as duplicates within a short time window", () => {
     const fp = chatLineFingerprint("npc", "Crisis on our hands");
-    const messages = [
-      {
-        getFlag(moduleId, key) {
-          if (moduleId !== "npc-narrator") return null;
-          if (key === "fingerprint") return fp;
-          return null;
-        },
+    const now = 1_000_000;
+    const recent = {
+      timestamp: now - 5_000,
+      getFlag(moduleId, key) {
+        if (moduleId !== "npc-narrator") return null;
+        if (key === "fingerprint") return fp;
+        return null;
       },
-    ];
-    expect(chatFingerprintAlreadyPosted(fp, messages, "npc-narrator")).toBe(true);
-    expect(chatFingerprintAlreadyPosted("other", messages, "npc-narrator")).toBe(false);
+    };
+    const stale = {
+      timestamp: now - 60_000,
+      getFlag(moduleId, key) {
+        if (moduleId !== "npc-narrator") return null;
+        if (key === "fingerprint") return fp;
+        return null;
+      },
+    };
+    expect(
+      chatFingerprintAlreadyPosted(fp, [recent], "npc-narrator", { nowMs: now, maxAgeMs: 20_000 }),
+    ).toBe(true);
+    expect(
+      chatFingerprintAlreadyPosted(fp, [stale], "npc-narrator", { nowMs: now, maxAgeMs: 20_000 }),
+    ).toBe(false);
+    expect(
+      chatFingerprintAlreadyPosted("other", [recent], "npc-narrator", { nowMs: now, maxAgeMs: 20_000 }),
+    ).toBe(false);
+  });
+
+  it("ignores fingerprint matches that have no usable timestamp", () => {
+    const fp = chatLineFingerprint("narrator", "Again");
+    const undated = {
+      getFlag(moduleId, key) {
+        if (moduleId === "npc-narrator" && key === "fingerprint") return fp;
+        return null;
+      },
+    };
+    expect(chatFingerprintAlreadyPosted(fp, [undated], "npc-narrator", { nowMs: Date.now() })).toBe(
+      false,
+    );
   });
 });
 

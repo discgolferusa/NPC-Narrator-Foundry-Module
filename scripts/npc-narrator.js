@@ -513,7 +513,9 @@ function chatAlreadyPosted(requestId, role) {
 }
 
 function chatFingerprintPosted(fingerprint) {
-  return chatFingerprintAlreadyPostedPure(fingerprint, game.messages?.contents, MODULE_ID);
+  return chatFingerprintAlreadyPostedPure(fingerprint, game.messages?.contents, MODULE_ID, {
+    nowMs: Date.now(),
+  });
 }
 
 function resolveActorForNpcChat(npcId, npcName) {
