@@ -92,14 +92,77 @@ export function shouldAcceptCampaignText(payload, session) {
 /**
  * Foundry `/npc-turn` already posts player + narrator + NPC lines from the HTTP JSON.
  * SignalR still fans those captions out (for Discord/browser), but Foundry must not
- * ChatMessage.create them again or the table sees replies twice (and often before the question).
+ * ChatMessage.create them again or the table sees replies twice (often GM first, then player).
  *
- * @param {{source?: string|null}|null|undefined} payload
+ * @param {{source?: string|null, foundry_user_id?: string|null}|null|undefined} payload
  */
 export function shouldMirrorCampaignTextToFoundryChat(payload) {
   const source = String(payload?.source || "").trim().toLowerCase();
-  if (source === "foundry_npc_turn") return false;
+  if (source.startsWith("foundry_")) return false;
+  // Foundry-originated turns always carry foundry_user_id from the editor.
+  if (String(payload?.foundry_user_id || "").trim()) return false;
   return true;
+}
+
+/**
+ * Fingerprint for near-term duplicate suppression (SignalR vs HTTP race).
+ * Role+text only — pair with lookback + author checks, never whole-log or wall-clock windows.
+ *
+ * @param {string|null|undefined} role
+ * @param {string|null|undefined} content
+ */
+export function chatLineFingerprint(role, content) {
+  const r = String(role || "").trim().toLowerCase();
+  const text = String(content || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!r || !text) return "";
+  return `${r}::${text}`;
+}
+
+/** How many trailing chat messages to scan for a cross-client fingerprint race. */
+export const CHAT_FINGERPRINT_LOOKBACK = 20;
+
+/**
+ * @param {{author?: {id?: string}|string, user?: {id?: string}|string}|null|undefined} message
+ */
+export function chatMessageAuthorId(message) {
+  const raw = message?.author?.id ?? message?.user?.id ?? message?.author ?? message?.user ?? "";
+  return String(raw || "").trim();
+}
+
+/**
+ * True when another Foundry user recently posted the same fingerprint for the *same*
+ * turn race (SignalR vs HTTP). Distinct known requestIds are never collapsed — a
+ * Discord/browser line mirrored by the GM must not suppress a later Foundry HTTP turn
+ * that happens to reuse the same narrator/NPC wording under a new requestId.
+ *
+ * @param {string|null|undefined} fingerprint
+ * @param {{getFlag?: Function, author?: *, user?: *}[]} messages
+ * @param {string} moduleId
+ * @param {{ lookback?: number, authorId?: string|null, requestId?: string|null }} [options]
+ */
+export function chatFingerprintAlreadyPosted(fingerprint, messages, moduleId, options = {}) {
+  if (!fingerprint || !messages) return false;
+  const lookback = Number.isFinite(options.lookback) ? options.lookback : CHAT_FINGERPRINT_LOOKBACK;
+  const authorId = String(options.authorId || "").trim();
+  const requestId = String(options.requestId || "").trim();
+  const list = Array.isArray(messages) ? messages : [...messages];
+  const recent = lookback > 0 ? list.slice(-Math.max(0, lookback)) : list;
+  return recent.some((m) => {
+    if (m.getFlag?.(moduleId, "fingerprint") !== fingerprint) return false;
+    const otherRequestId = String(m.getFlag?.(moduleId, "requestId") || "").trim();
+    // Both sides have explicit ids and they differ → different turns; do not skip.
+    if (requestId && otherRequestId && requestId !== otherRequestId) return false;
+    if (!authorId) return true;
+    const other = chatMessageAuthorId(m);
+    // Unknown author on the prior line: still treat as a race duplicate when requestIds
+    // are compatible (same, or at least one missing).
+    if (!other) return true;
+    return other !== authorId;
+  });
 }
 
 /**
@@ -168,21 +231,28 @@ export function resolveChatPortraitSrc(role, actor) {
 
 /**
  * Apply a portrait URL onto a rendered Foundry chat message header.
- * @param {ParentNode|null|undefined} root
+ * @param {ParentNode|JQuery|null|undefined} root
  * @param {string|null|undefined} src
  */
 export function applyChatPortraitSrc(root, src) {
   const url = String(src || "").trim();
   if (!root || !url) return false;
+  const el = root?.jquery ? root[0] : root?.[0] || root;
+  if (!el?.querySelector) return false;
+
   const img =
-    root.querySelector?.("img.avatar")
-    || root.querySelector?.("a.avatar img")
-    || root.querySelector?.(".message-header img");
+    el.querySelector("img.avatar")
+    || el.querySelector("a.avatar img")
+    || el.querySelector(".message-header img")
+    || el.querySelector(".message-sender img")
+    || el.querySelector("header.message-header img")
+    || el.querySelector(".chat-message img");
   if (img) {
     img.setAttribute("src", url);
+    img.removeAttribute("srcset");
     return true;
   }
-  const avatar = root.querySelector?.("a.avatar, .avatar");
+  const avatar = el.querySelector("a.avatar, .avatar, .message-header .avatar");
   if (avatar) {
     avatar.style.backgroundImage = `url("${url}")`;
     return true;

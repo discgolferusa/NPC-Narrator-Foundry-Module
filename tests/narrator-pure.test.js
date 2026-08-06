@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   bestNameMatch,
   chatAlreadyPosted,
+  chatFingerprintAlreadyPosted,
+  chatLineFingerprint,
   escapeHtml,
   nameMatchScore,
   normalizeName,
@@ -87,15 +89,120 @@ describe("shouldAcceptCampaignText", () => {
 });
 
 describe("shouldMirrorCampaignTextToFoundryChat", () => {
-  it("skips foundry_npc_turn captions already posted from the HTTP turn", () => {
+  it("skips foundry_* captions and any payload with foundry_user_id", () => {
     expect(shouldMirrorCampaignTextToFoundryChat({ source: "foundry_npc_turn" })).toBe(false);
     expect(shouldMirrorCampaignTextToFoundryChat({ source: "FOUNDRY_NPC_TURN" })).toBe(false);
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "foundry_other" })).toBe(false);
+    expect(
+      shouldMirrorCampaignTextToFoundryChat({ source: "mystery", foundry_user_id: "u1" }),
+    ).toBe(false);
   });
 
   it("still mirrors Discord/browser/other caption sources into Foundry chat", () => {
     expect(shouldMirrorCampaignTextToFoundryChat({ source: "discord_npc_turn" })).toBe(true);
     expect(shouldMirrorCampaignTextToFoundryChat({ source: "dm_voice_turn" })).toBe(true);
     expect(shouldMirrorCampaignTextToFoundryChat({})).toBe(true);
+  });
+});
+
+describe("chatLineFingerprint", () => {
+  it("dedupes identical role+content ignoring html/whitespace", () => {
+    const a = chatLineFingerprint("narrator", "<em>Hello   world</em>");
+    const b = chatLineFingerprint("narrator", "Hello world");
+    expect(a).toBe(b);
+    expect(chatLineFingerprint("npc", "Hello world")).not.toBe(a);
+  });
+
+  it("treats another author's recent matching fingerprint as a cross-client duplicate", () => {
+    const fp = chatLineFingerprint("npc", "Crisis on our hands");
+    const gmLine = {
+      author: { id: "gm1" },
+      getFlag(moduleId, key) {
+        if (moduleId === "npc-narrator" && key === "fingerprint") return fp;
+        if (moduleId === "npc-narrator" && key === "requestId") return null;
+        return null;
+      },
+    };
+    expect(
+      chatFingerprintAlreadyPosted(fp, [gmLine], "npc-narrator", {
+        authorId: "player2",
+        requestId: "req-foundry-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not skip a new requestId when a Discord/browser line reused the same wording", () => {
+    const fp = chatLineFingerprint("narrator", "The door creaks open.");
+    const discordMirror = {
+      author: { id: "gm1" },
+      getFlag(moduleId, key) {
+        if (moduleId !== "npc-narrator") return null;
+        if (key === "fingerprint") return fp;
+        if (key === "requestId") return "req-discord-1";
+        return null;
+      },
+    };
+    expect(
+      chatFingerprintAlreadyPosted(fp, [discordMirror], "npc-narrator", {
+        authorId: "player2",
+        requestId: "req-foundry-2",
+      }),
+    ).toBe(false);
+  });
+
+  it("still collapses the same requestId across authors when one side echoed the id", () => {
+    const fp = chatLineFingerprint("npc", "Crisis on our hands");
+    const gmLine = {
+      author: { id: "gm1" },
+      getFlag(moduleId, key) {
+        if (moduleId !== "npc-narrator") return null;
+        if (key === "fingerprint") return fp;
+        if (key === "requestId") return "req-shared";
+        return null;
+      },
+    };
+    expect(
+      chatFingerprintAlreadyPosted(fp, [gmLine], "npc-narrator", {
+        authorId: "player2",
+        requestId: "req-shared",
+      }),
+    ).toBe(true);
+  });
+
+  it("allows the same author to repeat the same wording later", () => {
+    const fp = chatLineFingerprint("narrator", "The door creaks open.");
+    const prior = {
+      author: { id: "player2" },
+      getFlag(moduleId, key) {
+        if (moduleId === "npc-narrator" && key === "fingerprint") return fp;
+        return null;
+      },
+    };
+    expect(
+      chatFingerprintAlreadyPosted(fp, [prior], "npc-narrator", { authorId: "player2" }),
+    ).toBe(false);
+  });
+
+  it("only scans a trailing lookback so ancient matches do not block forever", () => {
+    const fp = chatLineFingerprint("npc", "Hello again");
+    const ancient = {
+      author: { id: "gm1" },
+      getFlag(moduleId, key) {
+        if (moduleId === "npc-narrator" && key === "fingerprint") return fp;
+        return null;
+      },
+    };
+    const filler = Array.from({ length: 5 }, (_, i) => ({
+      author: { id: "u" },
+      getFlag: () => null,
+      id: `m${i}`,
+    }));
+    expect(
+      chatFingerprintAlreadyPosted(fp, [ancient, ...filler], "npc-narrator", {
+        authorId: "player2",
+        lookback: 5,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -127,9 +234,12 @@ describe("chat portraits", () => {
   });
 
   it("applies portrait src onto chat header img", () => {
-    const img = { setAttribute() {}, _src: null };
-    img.setAttribute = (k, v) => {
-      if (k === "src") img._src = v;
+    const img = {
+      _src: null,
+      setAttribute(k, v) {
+        if (k === "src") this._src = v;
+      },
+      removeAttribute() {},
     };
     const root = {
       querySelector(sel) {

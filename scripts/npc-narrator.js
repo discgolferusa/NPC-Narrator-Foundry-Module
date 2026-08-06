@@ -7,6 +7,8 @@ import { runLocationAuthoringWizard, runNpcAuthoringWizard } from "./narrator-wi
 import {
   bestNameMatch as bestNameMatchPure,
   chatAlreadyPosted as chatAlreadyPostedPure,
+  chatFingerprintAlreadyPosted as chatFingerprintAlreadyPostedPure,
+  chatLineFingerprint,
   escapeHtml,
   plainTextSeed,
   applyChatPortraitSrc,
@@ -510,6 +512,13 @@ function chatAlreadyPosted(requestId, role) {
   return chatAlreadyPostedPure(requestId, role, game.messages?.contents, MODULE_ID);
 }
 
+function chatFingerprintPosted(fingerprint, requestId) {
+  return chatFingerprintAlreadyPostedPure(fingerprint, game.messages?.contents, MODULE_ID, {
+    authorId: game.user?.id,
+    requestId,
+  });
+}
+
 function resolveActorForNpcChat(npcId, npcName) {
   return findActorForNpc(npcId, npcName, getNpcOverrides(), game.actors?.contents || []);
 }
@@ -531,6 +540,7 @@ function buildChatSpeaker(alias, actor) {
 
 function applyNarratorChatPortrait(message, root) {
   const role = message?.getFlag?.(MODULE_ID, "role");
+  if (!role || (role !== "narrator" && role !== "npc")) return;
   const flagged = message?.getFlag?.(MODULE_ID, "portraitSrc");
   let src = flagged || null;
   if (!src && role === "narrator") {
@@ -542,12 +552,17 @@ function applyNarratorChatPortrait(message, root) {
       || (message?.speaker?.actor ? game.actors.get(message.speaker.actor) : null);
     src = resolveChatPortraitSrc("npc", actor);
   }
-  applyChatPortraitSrc(root, src);
+  if (!applyChatPortraitSrc(root, src)) {
+    // Foundry may finish painting the avatar after the render hook; retry once.
+    requestAnimationFrame(() => applyChatPortraitSrc(root, src));
+  }
 }
 
 async function postChatLine({ content, alias, role, visibility, foundryUserId, requestId, npcId, npcName }) {
   if (!content?.trim()) return;
   if (requestId && role && chatAlreadyPosted(requestId, role)) return;
+  const fingerprint = chatLineFingerprint(role, content);
+  if (fingerprint && chatFingerprintPosted(fingerprint, requestId)) return;
 
   const isWhisper = visibility === "whisper";
   let body = escapeHtml(content.trim());
@@ -569,6 +584,7 @@ async function postChatLine({ content, alias, role, visibility, foundryUserId, r
         requestId: requestId || null,
         portraitSrc: portraitSrc || null,
         npcId: npcId || null,
+        fingerprint: fingerprint || null,
       },
     },
   };
