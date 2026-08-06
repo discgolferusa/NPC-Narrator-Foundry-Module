@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   bestNameMatch,
   chatAlreadyPosted,
+  chatFingerprintAlreadyPosted,
+  chatLineFingerprint,
   escapeHtml,
   nameMatchScore,
   normalizeName,
@@ -87,15 +89,43 @@ describe("shouldAcceptCampaignText", () => {
 });
 
 describe("shouldMirrorCampaignTextToFoundryChat", () => {
-  it("skips foundry_npc_turn captions already posted from the HTTP turn", () => {
+  it("skips foundry_* captions and any payload with foundry_user_id", () => {
     expect(shouldMirrorCampaignTextToFoundryChat({ source: "foundry_npc_turn" })).toBe(false);
     expect(shouldMirrorCampaignTextToFoundryChat({ source: "FOUNDRY_NPC_TURN" })).toBe(false);
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "foundry_other" })).toBe(false);
+    expect(
+      shouldMirrorCampaignTextToFoundryChat({ source: "mystery", foundry_user_id: "u1" }),
+    ).toBe(false);
   });
 
   it("still mirrors Discord/browser/other caption sources into Foundry chat", () => {
     expect(shouldMirrorCampaignTextToFoundryChat({ source: "discord_npc_turn" })).toBe(true);
     expect(shouldMirrorCampaignTextToFoundryChat({ source: "dm_voice_turn" })).toBe(true);
     expect(shouldMirrorCampaignTextToFoundryChat({})).toBe(true);
+  });
+});
+
+describe("chatLineFingerprint", () => {
+  it("dedupes identical role+content ignoring html/whitespace", () => {
+    const a = chatLineFingerprint("narrator", "<em>Hello   world</em>");
+    const b = chatLineFingerprint("narrator", "Hello world");
+    expect(a).toBe(b);
+    expect(chatLineFingerprint("npc", "Hello world")).not.toBe(a);
+  });
+
+  it("detects fingerprint already on a chat message", () => {
+    const fp = chatLineFingerprint("npc", "Crisis on our hands");
+    const messages = [
+      {
+        getFlag(moduleId, key) {
+          if (moduleId !== "npc-narrator") return null;
+          if (key === "fingerprint") return fp;
+          return null;
+        },
+      },
+    ];
+    expect(chatFingerprintAlreadyPosted(fp, messages, "npc-narrator")).toBe(true);
+    expect(chatFingerprintAlreadyPosted("other", messages, "npc-narrator")).toBe(false);
   });
 });
 
@@ -127,9 +157,12 @@ describe("chat portraits", () => {
   });
 
   it("applies portrait src onto chat header img", () => {
-    const img = { setAttribute() {}, _src: null };
-    img.setAttribute = (k, v) => {
-      if (k === "src") img._src = v;
+    const img = {
+      _src: null,
+      setAttribute(k, v) {
+        if (k === "src") this._src = v;
+      },
+      removeAttribute() {},
     };
     const root = {
       querySelector(sel) {

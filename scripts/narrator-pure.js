@@ -92,14 +92,44 @@ export function shouldAcceptCampaignText(payload, session) {
 /**
  * Foundry `/npc-turn` already posts player + narrator + NPC lines from the HTTP JSON.
  * SignalR still fans those captions out (for Discord/browser), but Foundry must not
- * ChatMessage.create them again or the table sees replies twice (and often before the question).
+ * ChatMessage.create them again or the table sees replies twice (often GM first, then player).
  *
- * @param {{source?: string|null}|null|undefined} payload
+ * @param {{source?: string|null, foundry_user_id?: string|null}|null|undefined} payload
  */
 export function shouldMirrorCampaignTextToFoundryChat(payload) {
   const source = String(payload?.source || "").trim().toLowerCase();
-  if (source === "foundry_npc_turn") return false;
+  if (source.startsWith("foundry_")) return false;
+  // Foundry-originated turns always carry foundry_user_id from the editor.
+  if (String(payload?.foundry_user_id || "").trim()) return false;
   return true;
+}
+
+/**
+ * Stable fingerprint so two clients posting the same Narrator/NPC line can dedupe
+ * even when request_id is missing on one path.
+ *
+ * @param {string|null|undefined} role
+ * @param {string|null|undefined} content
+ */
+export function chatLineFingerprint(role, content) {
+  const r = String(role || "").trim().toLowerCase();
+  const text = String(content || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!r || !text) return "";
+  return `${r}::${text}`;
+}
+
+/**
+ * @param {string|null|undefined} fingerprint
+ * @param {{getFlag?: Function}[]} messages
+ * @param {string} moduleId
+ */
+export function chatFingerprintAlreadyPosted(fingerprint, messages, moduleId) {
+  if (!fingerprint || !messages) return false;
+  return messages.some((m) => m.getFlag?.(moduleId, "fingerprint") === fingerprint);
 }
 
 /**
@@ -168,21 +198,28 @@ export function resolveChatPortraitSrc(role, actor) {
 
 /**
  * Apply a portrait URL onto a rendered Foundry chat message header.
- * @param {ParentNode|null|undefined} root
+ * @param {ParentNode|JQuery|null|undefined} root
  * @param {string|null|undefined} src
  */
 export function applyChatPortraitSrc(root, src) {
   const url = String(src || "").trim();
   if (!root || !url) return false;
+  const el = root?.jquery ? root[0] : root?.[0] || root;
+  if (!el?.querySelector) return false;
+
   const img =
-    root.querySelector?.("img.avatar")
-    || root.querySelector?.("a.avatar img")
-    || root.querySelector?.(".message-header img");
+    el.querySelector("img.avatar")
+    || el.querySelector("a.avatar img")
+    || el.querySelector(".message-header img")
+    || el.querySelector(".message-sender img")
+    || el.querySelector("header.message-header img")
+    || el.querySelector(".chat-message img");
   if (img) {
     img.setAttribute("src", url);
+    img.removeAttribute("srcset");
     return true;
   }
-  const avatar = root.querySelector?.("a.avatar, .avatar");
+  const avatar = el.querySelector("a.avatar, .avatar, .message-header .avatar");
   if (avatar) {
     avatar.style.backgroundImage = `url("${url}")`;
     return true;
