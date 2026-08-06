@@ -1835,6 +1835,16 @@ Hooks.on("getSceneControlButtons", (controls) => {
   registerTokenLayerNarratorTools(controls);
 });
 
+// Swap Narrator/NPC chat avatars off the speaking player's portrait.
+Hooks.on("renderChatMessageHTML", (message, html) => {
+  applyNarratorChatPortrait(message, html);
+});
+// Legacy hook still used by some systems / older builds.
+Hooks.on("renderChatMessage", (message, html) => {
+  const root = html?.[0] || html;
+  applyNarratorChatPortrait(message, root);
+});
+
 Hooks.on("chatMessage", (_log, message) => {
   if (!message.startsWith("/narrator")) return true;
   const parts = message.trim().split(/\s+/);
