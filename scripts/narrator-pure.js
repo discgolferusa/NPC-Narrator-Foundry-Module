@@ -90,6 +90,19 @@ export function shouldAcceptCampaignText(payload, session) {
 }
 
 /**
+ * Foundry `/npc-turn` already posts player + narrator + NPC lines from the HTTP JSON.
+ * SignalR still fans those captions out (for Discord/browser), but Foundry must not
+ * ChatMessage.create them again or the table sees replies twice (and often before the question).
+ *
+ * @param {{source?: string|null}|null|undefined} payload
+ */
+export function shouldMirrorCampaignTextToFoundryChat(payload) {
+  const source = String(payload?.source || "").trim().toLowerCase();
+  if (source === "foundry_npc_turn") return false;
+  return true;
+}
+
+/**
  * Exactly one Foundry client may JoinAsFoundry. Prefer Foundry's activeGM so co-GMs
  * do not flap the single foundry presence slot or double-post captions.
  *

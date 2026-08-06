@@ -11,6 +11,7 @@ import {
   NARRATOR_CHAT_PORTRAIT,
   resolveChatPortraitSrc,
   shouldAcceptCampaignText,
+  shouldMirrorCampaignTextToFoundryChat,
   shouldOwnFoundryHub,
   whisperTargets,
 } from "../scripts/narrator-pure.js";
@@ -82,6 +83,19 @@ describe("shouldAcceptCampaignText", () => {
     expect(shouldAcceptCampaignText({ campaign_id: "Bound" }, { campaignId: "bound" })).toBe(true);
     expect(shouldAcceptCampaignText({ campaign_id: "Bound" }, { campaignId: "bound" })).toBe(true);
     expect(shouldAcceptCampaignText({}, { campaignId: "bound" })).toBe(true);
+  });
+});
+
+describe("shouldMirrorCampaignTextToFoundryChat", () => {
+  it("skips foundry_npc_turn captions already posted from the HTTP turn", () => {
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "foundry_npc_turn" })).toBe(false);
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "FOUNDRY_NPC_TURN" })).toBe(false);
+  });
+
+  it("still mirrors Discord/browser/other caption sources into Foundry chat", () => {
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "discord_npc_turn" })).toBe(true);
+    expect(shouldMirrorCampaignTextToFoundryChat({ source: "dm_voice_turn" })).toBe(true);
+    expect(shouldMirrorCampaignTextToFoundryChat({})).toBe(true);
   });
 });
 

@@ -14,6 +14,7 @@ import {
   NARRATOR_CHAT_PORTRAIT,
   resolveChatPortraitSrc,
   shouldAcceptCampaignText,
+  shouldMirrorCampaignTextToFoundryChat,
   shouldOwnFoundryHub,
   whisperTargets as whisperTargetsPure,
 } from "./narrator-pure.js";
@@ -638,6 +639,10 @@ async function handleCampaignText(payload) {
   if (!shouldAcceptCampaignText(payload, getSession())) {
     return;
   }
+  // Local sendNpcTurn already wrote these lines from the /npc-turn response.
+  if (!shouldMirrorCampaignTextToFoundryChat(payload)) {
+    return;
+  }
   const visibility = payload.visibility || "chat";
   const foundryUserId = payload.foundry_user_id || null;
   const requestId = payload.request_id || null;
@@ -819,6 +824,18 @@ async function sendNpcTurn({ text, npcId, visibility }) {
   }
 
   const requestId = foundry.utils.randomID?.() || crypto.randomUUID();
+
+  // Post the question first so chat order is player → narrator → NPC (SignalR captions
+  // for foundry_npc_turn are ignored; replies come from the HTTP JSON below).
+  await postChatLine({
+    content: text,
+    alias: game.user.character?.name || game.user.name,
+    role: "player",
+    visibility,
+    foundryUserId: game.user.id,
+    requestId,
+  });
+
   const { response, data } = await apiFetch("/api/foundry/npc-turn", {
     method: "POST",
     body: JSON.stringify({
@@ -835,15 +852,6 @@ async function sendNpcTurn({ text, npcId, visibility }) {
     throw new Error(data?.error || `NPC turn failed (${response.status})`);
   }
 
-  // Always post into Foundry chat so everyone sees public turns (and whispers stay private).
-  await postChatLine({
-    content: text,
-    alias: game.user.character?.name || game.user.name,
-    role: "player",
-    visibility,
-    foundryUserId: game.user.id,
-    requestId,
-  });
   await postTurnRepliesToChat(data, visibility, game.user.id, requestId);
 
   return data;
