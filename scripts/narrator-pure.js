@@ -106,7 +106,7 @@ export function shouldMirrorCampaignTextToFoundryChat(payload) {
 
 /**
  * Fingerprint for near-term duplicate suppression (SignalR vs HTTP race).
- * Role+text only — must be paired with a short time window, never whole-log scan.
+ * Role+text only — pair with lookback + author checks, never whole-log or wall-clock windows.
  *
  * @param {string|null|undefined} role
  * @param {string|null|undefined} content
@@ -122,28 +122,40 @@ export function chatLineFingerprint(role, content) {
   return `${r}::${text}`;
 }
 
-/** Default window for fingerprint dedupe — covers SignalR/HTTP races, not session history. */
-export const CHAT_FINGERPRINT_MAX_AGE_MS = 20_000;
+/** How many trailing chat messages to scan for a cross-client fingerprint race. */
+export const CHAT_FINGERPRINT_LOOKBACK = 20;
 
 /**
- * True only if the same fingerprint was posted recently (not anywhere in world history).
+ * @param {{author?: {id?: string}|string, user?: {id?: string}|string}|null|undefined} message
+ */
+export function chatMessageAuthorId(message) {
+  const raw = message?.author?.id ?? message?.user?.id ?? message?.author ?? message?.user ?? "";
+  return String(raw || "").trim();
+}
+
+/**
+ * True when another Foundry user recently posted the same fingerprint (SignalR vs HTTP race).
+ * Does not use wall clocks — client/server skew must not defeat the safety net.
+ * Same-author repeats of the same wording are allowed.
  *
  * @param {string|null|undefined} fingerprint
- * @param {{getFlag?: Function, timestamp?: number}[]} messages
+ * @param {{getFlag?: Function, author?: *, user?: *}[]} messages
  * @param {string} moduleId
- * @param {{ nowMs?: number, maxAgeMs?: number }} [options]
+ * @param {{ lookback?: number, authorId?: string|null }} [options]
  */
 export function chatFingerprintAlreadyPosted(fingerprint, messages, moduleId, options = {}) {
   if (!fingerprint || !messages) return false;
-  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
-  const maxAgeMs = Number.isFinite(options.maxAgeMs) ? options.maxAgeMs : CHAT_FINGERPRINT_MAX_AGE_MS;
-  const oldest = nowMs - maxAgeMs;
-  return messages.some((m) => {
+  const lookback = Number.isFinite(options.lookback) ? options.lookback : CHAT_FINGERPRINT_LOOKBACK;
+  const authorId = String(options.authorId || "").trim();
+  const list = Array.isArray(messages) ? messages : [...messages];
+  const recent = lookback > 0 ? list.slice(-Math.max(0, lookback)) : list;
+  return recent.some((m) => {
     if (m.getFlag?.(moduleId, "fingerprint") !== fingerprint) return false;
-    const ts = Number(m.timestamp);
-    // Missing/invalid timestamps are ignored so ancient undated lines cannot block forever.
-    if (!Number.isFinite(ts)) return false;
-    return ts >= oldest && ts <= nowMs + 1000;
+    if (!authorId) return true;
+    const other = chatMessageAuthorId(m);
+    // Unknown author on the prior line: still treat as a race duplicate.
+    if (!other) return true;
+    return other !== authorId;
   });
 }
 

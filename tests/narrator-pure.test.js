@@ -113,47 +113,54 @@ describe("chatLineFingerprint", () => {
     expect(chatLineFingerprint("npc", "Hello world")).not.toBe(a);
   });
 
-  it("only treats matching fingerprints as duplicates within a short time window", () => {
+  it("treats another author's recent matching fingerprint as a cross-client duplicate", () => {
     const fp = chatLineFingerprint("npc", "Crisis on our hands");
-    const now = 1_000_000;
-    const recent = {
-      timestamp: now - 5_000,
-      getFlag(moduleId, key) {
-        if (moduleId !== "npc-narrator") return null;
-        if (key === "fingerprint") return fp;
-        return null;
-      },
-    };
-    const stale = {
-      timestamp: now - 60_000,
-      getFlag(moduleId, key) {
-        if (moduleId !== "npc-narrator") return null;
-        if (key === "fingerprint") return fp;
-        return null;
-      },
-    };
-    expect(
-      chatFingerprintAlreadyPosted(fp, [recent], "npc-narrator", { nowMs: now, maxAgeMs: 20_000 }),
-    ).toBe(true);
-    expect(
-      chatFingerprintAlreadyPosted(fp, [stale], "npc-narrator", { nowMs: now, maxAgeMs: 20_000 }),
-    ).toBe(false);
-    expect(
-      chatFingerprintAlreadyPosted("other", [recent], "npc-narrator", { nowMs: now, maxAgeMs: 20_000 }),
-    ).toBe(false);
-  });
-
-  it("ignores fingerprint matches that have no usable timestamp", () => {
-    const fp = chatLineFingerprint("narrator", "Again");
-    const undated = {
+    const gmLine = {
+      author: { id: "gm1" },
       getFlag(moduleId, key) {
         if (moduleId === "npc-narrator" && key === "fingerprint") return fp;
         return null;
       },
     };
-    expect(chatFingerprintAlreadyPosted(fp, [undated], "npc-narrator", { nowMs: Date.now() })).toBe(
-      false,
-    );
+    expect(
+      chatFingerprintAlreadyPosted(fp, [gmLine], "npc-narrator", { authorId: "player2" }),
+    ).toBe(true);
+  });
+
+  it("allows the same author to repeat the same wording later", () => {
+    const fp = chatLineFingerprint("narrator", "The door creaks open.");
+    const prior = {
+      author: { id: "player2" },
+      getFlag(moduleId, key) {
+        if (moduleId === "npc-narrator" && key === "fingerprint") return fp;
+        return null;
+      },
+    };
+    expect(
+      chatFingerprintAlreadyPosted(fp, [prior], "npc-narrator", { authorId: "player2" }),
+    ).toBe(false);
+  });
+
+  it("only scans a trailing lookback so ancient matches do not block forever", () => {
+    const fp = chatLineFingerprint("npc", "Hello again");
+    const ancient = {
+      author: { id: "gm1" },
+      getFlag(moduleId, key) {
+        if (moduleId === "npc-narrator" && key === "fingerprint") return fp;
+        return null;
+      },
+    };
+    const filler = Array.from({ length: 5 }, (_, i) => ({
+      author: { id: "u" },
+      getFlag: () => null,
+      id: `m${i}`,
+    }));
+    expect(
+      chatFingerprintAlreadyPosted(fp, [ancient, ...filler], "npc-narrator", {
+        authorId: "player2",
+        lookback: 5,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -514,7 +514,7 @@ function chatAlreadyPosted(requestId, role) {
 
 function chatFingerprintPosted(fingerprint) {
   return chatFingerprintAlreadyPostedPure(fingerprint, game.messages?.contents, MODULE_ID, {
-    nowMs: Date.now(),
+    authorId: game.user?.id,
   });
 }
 
