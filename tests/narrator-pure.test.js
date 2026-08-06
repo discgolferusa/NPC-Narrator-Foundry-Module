@@ -6,6 +6,10 @@ import {
   nameMatchScore,
   normalizeName,
   plainTextSeed,
+  applyChatPortraitSrc,
+  findActorForNpc,
+  NARRATOR_CHAT_PORTRAIT,
+  resolveChatPortraitSrc,
   shouldAcceptCampaignText,
   shouldOwnFoundryHub,
   whisperTargets,
@@ -87,5 +91,39 @@ describe("shouldOwnFoundryHub", () => {
     expect(shouldOwnFoundryHub({ id: "gm2", isGM: true }, { id: "gm1" })).toBe(false);
     expect(shouldOwnFoundryHub({ id: "gm1", isGM: true }, { id: "gm1" })).toBe(true);
     expect(shouldOwnFoundryHub({ id: "gm1", isGM: true }, null)).toBe(true);
+  });
+});
+
+describe("chat portraits", () => {
+  it("finds actor by override then name", () => {
+    const actors = [
+      { id: "a1", name: "Innkeeper Marta", img: "actors/marta.webp" },
+      { id: "a2", name: "Guard", img: "actors/guard.webp" },
+    ];
+    expect(findActorForNpc("inn_1", null, { a1: "inn_1" }, actors)?.id).toBe("a1");
+    expect(findActorForNpc(null, "Guard", {}, actors)?.id).toBe("a2");
+  });
+
+  it("uses system narrator icon and actor img for npc", () => {
+    expect(resolveChatPortraitSrc("narrator", null)).toBe(NARRATOR_CHAT_PORTRAIT);
+    expect(resolveChatPortraitSrc("npc", { img: "path/npc.webp" })).toBe("path/npc.webp");
+    expect(resolveChatPortraitSrc("npc", { prototypeToken: { texture: { src: "tok.webp" } } })).toBe(
+      "tok.webp",
+    );
+  });
+
+  it("applies portrait src onto chat header img", () => {
+    const img = { setAttribute() {}, _src: null };
+    img.setAttribute = (k, v) => {
+      if (k === "src") img._src = v;
+    };
+    const root = {
+      querySelector(sel) {
+        if (sel.includes("img")) return img;
+        return null;
+      },
+    };
+    expect(applyChatPortraitSrc(root, "icons/svg/book.svg")).toBe(true);
+    expect(img._src).toBe("icons/svg/book.svg");
   });
 });
