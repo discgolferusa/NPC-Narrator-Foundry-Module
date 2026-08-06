@@ -134,26 +134,32 @@ export function chatMessageAuthorId(message) {
 }
 
 /**
- * True when another Foundry user recently posted the same fingerprint (SignalR vs HTTP race).
- * Does not use wall clocks — client/server skew must not defeat the safety net.
- * Same-author repeats of the same wording are allowed.
+ * True when another Foundry user recently posted the same fingerprint for the *same*
+ * turn race (SignalR vs HTTP). Distinct known requestIds are never collapsed — a
+ * Discord/browser line mirrored by the GM must not suppress a later Foundry HTTP turn
+ * that happens to reuse the same narrator/NPC wording under a new requestId.
  *
  * @param {string|null|undefined} fingerprint
  * @param {{getFlag?: Function, author?: *, user?: *}[]} messages
  * @param {string} moduleId
- * @param {{ lookback?: number, authorId?: string|null }} [options]
+ * @param {{ lookback?: number, authorId?: string|null, requestId?: string|null }} [options]
  */
 export function chatFingerprintAlreadyPosted(fingerprint, messages, moduleId, options = {}) {
   if (!fingerprint || !messages) return false;
   const lookback = Number.isFinite(options.lookback) ? options.lookback : CHAT_FINGERPRINT_LOOKBACK;
   const authorId = String(options.authorId || "").trim();
+  const requestId = String(options.requestId || "").trim();
   const list = Array.isArray(messages) ? messages : [...messages];
   const recent = lookback > 0 ? list.slice(-Math.max(0, lookback)) : list;
   return recent.some((m) => {
     if (m.getFlag?.(moduleId, "fingerprint") !== fingerprint) return false;
+    const otherRequestId = String(m.getFlag?.(moduleId, "requestId") || "").trim();
+    // Both sides have explicit ids and they differ → different turns; do not skip.
+    if (requestId && otherRequestId && requestId !== otherRequestId) return false;
     if (!authorId) return true;
     const other = chatMessageAuthorId(m);
-    // Unknown author on the prior line: still treat as a race duplicate.
+    // Unknown author on the prior line: still treat as a race duplicate when requestIds
+    // are compatible (same, or at least one missing).
     if (!other) return true;
     return other !== authorId;
   });

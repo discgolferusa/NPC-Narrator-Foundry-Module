@@ -512,9 +512,10 @@ function chatAlreadyPosted(requestId, role) {
   return chatAlreadyPostedPure(requestId, role, game.messages?.contents, MODULE_ID);
 }
 
-function chatFingerprintPosted(fingerprint) {
+function chatFingerprintPosted(fingerprint, requestId) {
   return chatFingerprintAlreadyPostedPure(fingerprint, game.messages?.contents, MODULE_ID, {
     authorId: game.user?.id,
+    requestId,
   });
 }
 
@@ -561,7 +562,7 @@ async function postChatLine({ content, alias, role, visibility, foundryUserId, r
   if (!content?.trim()) return;
   if (requestId && role && chatAlreadyPosted(requestId, role)) return;
   const fingerprint = chatLineFingerprint(role, content);
-  if (fingerprint && chatFingerprintPosted(fingerprint)) return;
+  if (fingerprint && chatFingerprintPosted(fingerprint, requestId)) return;
 
   const isWhisper = visibility === "whisper";
   let body = escapeHtml(content.trim());

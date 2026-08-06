@@ -119,11 +119,53 @@ describe("chatLineFingerprint", () => {
       author: { id: "gm1" },
       getFlag(moduleId, key) {
         if (moduleId === "npc-narrator" && key === "fingerprint") return fp;
+        if (moduleId === "npc-narrator" && key === "requestId") return null;
         return null;
       },
     };
     expect(
-      chatFingerprintAlreadyPosted(fp, [gmLine], "npc-narrator", { authorId: "player2" }),
+      chatFingerprintAlreadyPosted(fp, [gmLine], "npc-narrator", {
+        authorId: "player2",
+        requestId: "req-foundry-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not skip a new requestId when a Discord/browser line reused the same wording", () => {
+    const fp = chatLineFingerprint("narrator", "The door creaks open.");
+    const discordMirror = {
+      author: { id: "gm1" },
+      getFlag(moduleId, key) {
+        if (moduleId !== "npc-narrator") return null;
+        if (key === "fingerprint") return fp;
+        if (key === "requestId") return "req-discord-1";
+        return null;
+      },
+    };
+    expect(
+      chatFingerprintAlreadyPosted(fp, [discordMirror], "npc-narrator", {
+        authorId: "player2",
+        requestId: "req-foundry-2",
+      }),
+    ).toBe(false);
+  });
+
+  it("still collapses the same requestId across authors when one side echoed the id", () => {
+    const fp = chatLineFingerprint("npc", "Crisis on our hands");
+    const gmLine = {
+      author: { id: "gm1" },
+      getFlag(moduleId, key) {
+        if (moduleId !== "npc-narrator") return null;
+        if (key === "fingerprint") return fp;
+        if (key === "requestId") return "req-shared";
+        return null;
+      },
+    };
+    expect(
+      chatFingerprintAlreadyPosted(fp, [gmLine], "npc-narrator", {
+        authorId: "player2",
+        requestId: "req-shared",
+      }),
     ).toBe(true);
   });
 
