@@ -13,6 +13,7 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 - Replies post to Foundry chat as **Narrator** and **NPC** lines
 - Whisper replies stay private to the sending player (+ GMs)
 - TTS follows the GM’s existing audio recipient (e.g. Discord)
+- **GM Sync Narrator portrait** on a mapped Actor: downloads the closed-mouth still and sets sheet + prototype token art (and updates placed tokens when possible)
 
 ## Install
 
@@ -29,6 +30,7 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 3. Set **Campaign text output** → Specific device → the Foundry device.
 4. Set **Campaign audio output** as desired (e.g. Discord).
 5. Open any Actor sheet → **NPC Narrator** header button (or right-click Actor Directory → Map actor).
+6. After mapping a Narrator NPC (and assigning a talking portrait in the DM Campaign Editor), use **Sync Narrator portrait** on the Actor sheet (or **Sync portrait** in the mapping dialog) so Foundry uses the same closed-mouth still players see.
 
 ### Create Narrator content from Foundry (GM)
 
@@ -83,7 +85,7 @@ Also available:
 | Narrator NPC | world `npcOverrides[actorId]` (GM only) | New actor id → blank |
 | Narrator Location | world `locationMaps[sceneId]` (GM only) | New scene id → blank |
 
-API: `game.npcNarrator.mapActor(actor)`
+API: `game.npcNarrator.mapActor(actor)`, `game.npcNarrator.syncPortrait(actor)`
 
 ## Architecture
 

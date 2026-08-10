@@ -259,3 +259,49 @@ export function applyChatPortraitSrc(root, src) {
   }
   return false;
 }
+
+/**
+ * Safe filename stem for Foundry Data upload from a Narrator npc id.
+ * @param {string|null|undefined} npcId
+ */
+export function portraitUploadFileStem(npcId) {
+  const raw = String(npcId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return raw || "npc";
+}
+
+/**
+ * Build actor update payload for sheet portrait + prototype token art.
+ * @param {string} path Foundry data path (e.g. npc-narrator/portraits/foo.png)
+ */
+export function actorPortraitTokenUpdate(path) {
+  const src = String(path || "").trim();
+  if (!src) return null;
+  return {
+    img: src,
+    "prototypeToken.texture.src": src,
+  };
+}
+
+/**
+ * Extension for Content-Type / filename from a portrait HTTP response.
+ * @param {string|null|undefined} contentType
+ * @param {string|null|undefined} fallbackExt
+ */
+export function portraitFileExtension(contentType, fallbackExt = ".png") {
+  const ct = String(contentType || "").toLowerCase();
+  if (ct.includes("jpeg") || ct.includes("jpg")) return ".jpg";
+  if (ct.includes("webp")) return ".webp";
+  if (ct.includes("png")) return ".png";
+  const fb = String(fallbackExt || ".png");
+  return fb.startsWith(".") ? fb : `.${fb}`;
+}
+
+/**
+ * Relative upload folder under Foundry Data for Narrator stills.
+ */
+export const NARRATOR_PORTRAIT_UPLOAD_DIR = "npc-narrator/portraits";
+
