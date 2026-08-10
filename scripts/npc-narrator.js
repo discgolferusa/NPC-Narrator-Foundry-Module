@@ -16,7 +16,9 @@ import {
   NARRATOR_CHAT_PORTRAIT,
   NARRATOR_PORTRAIT_UPLOAD_DIR,
   actorPortraitTokenUpdate,
+  isFilePickerDirectoryExistsError,
   portraitFileExtension,
+  portraitUploadDirSegments,
   portraitUploadFileStem,
   resolveChatPortraitSrc,
   shouldAcceptCampaignText,
@@ -1610,15 +1612,7 @@ async function syncNarratorPortraitToActor(actor, npcIdOverride = null) {
   const filename = `${portraitUploadFileStem(npcId)}${ext}`;
   const file = new File([blob], filename, { type: contentType || blob.type || "image/png" });
 
-  try {
-    await FilePicker.createDirectory("data", NARRATOR_PORTRAIT_UPLOAD_DIR);
-  } catch (err) {
-    // Directory may already exist — Foundry throws on duplicate.
-    const msg = String(err?.message || err || "");
-    if (!/exist/i.test(msg)) {
-      console.warn(`${MODULE_ID} createDirectory portraits`, err);
-    }
-  }
+  await ensurePortraitUploadDirs();
 
   const uploaded = await FilePicker.upload(
     "data",
@@ -1635,17 +1629,40 @@ async function syncNarratorPortraitToActor(actor, npcIdOverride = null) {
   const update = actorPortraitTokenUpdate(path);
   await actor.update(update);
 
-  const tokens = typeof actor.getActiveTokens === "function" ? actor.getActiveTokens(true) : [];
+  // linked=false so unlinked NPC tokens on the current scene are included.
+  const tokens = typeof actor.getActiveTokens === "function" ? actor.getActiveTokens(false) : [];
+  let placedUpdated = 0;
   for (const token of tokens || []) {
     try {
       await token.document.update({ "texture.src": path });
+      placedUpdated += 1;
     } catch (err) {
       console.warn(`${MODULE_ID} placed token portrait update skipped`, err);
     }
   }
 
-  ui.notifications.info(`Synced Narrator portrait onto ${actor.name} (sheet + token).`);
+  if (placedUpdated > 0) {
+    ui.notifications.info(
+      `Synced Narrator portrait onto ${actor.name} (sheet, prototype token, and ${placedUpdated} placed token${placedUpdated === 1 ? "" : "s"}).`,
+    );
+  } else {
+    ui.notifications.info(
+      `Synced Narrator portrait onto ${actor.name} (sheet + prototype token). No placed tokens on this scene were updated.`,
+    );
+  }
   return path;
+}
+
+/** Create npc-narrator then npc-narrator/portraits; Foundry does not mkdir -p. */
+async function ensurePortraitUploadDirs() {
+  for (const path of portraitUploadDirSegments(NARRATOR_PORTRAIT_UPLOAD_DIR)) {
+    try {
+      await FilePicker.createDirectory("data", path);
+    } catch (err) {
+      if (isFilePickerDirectoryExistsError(err)) continue;
+      throw new Error(`Could not create upload folder "${path}": ${err?.message || err}`);
+    }
+  }
 }
 
 

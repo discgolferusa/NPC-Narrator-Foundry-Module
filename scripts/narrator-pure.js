@@ -305,3 +305,39 @@ export function portraitFileExtension(contentType, fallbackExt = ".png") {
  */
 export const NARRATOR_PORTRAIT_UPLOAD_DIR = "npc-narrator/portraits";
 
+/**
+ * Cumulative directory paths Foundry must create one level at a time
+ * (createDirectory does not create intermediate folders).
+ * @param {string|null|undefined} dir
+ * @returns {string[]}
+ */
+export function portraitUploadDirSegments(dir) {
+  const parts = String(dir || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const out = [];
+  let acc = "";
+  for (const part of parts) {
+    acc = acc ? `${acc}/${part}` : part;
+    out.push(acc);
+  }
+  return out;
+}
+
+/**
+ * True when FilePicker.createDirectory failed because the folder already exists.
+ * Keep this narrow so real creation failures are not swallowed.
+ * @param {unknown} err
+ */
+export function isFilePickerDirectoryExistsError(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (!msg) return false;
+  // Foundry / Node-ish messages seen in the wild.
+  if (/\beexist\b/.test(msg)) return true;
+  if (/already exists/.test(msg)) return true;
+  if (/directory exists/.test(msg)) return true;
+  return false;
+}
+

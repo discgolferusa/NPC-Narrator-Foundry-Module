@@ -13,7 +13,9 @@ import {
   NARRATOR_CHAT_PORTRAIT,
   NARRATOR_PORTRAIT_UPLOAD_DIR,
   actorPortraitTokenUpdate,
+  isFilePickerDirectoryExistsError,
   portraitFileExtension,
+  portraitUploadDirSegments,
   portraitUploadFileStem,
   resolveChatPortraitSrc,
   shouldAcceptCampaignText,
@@ -279,5 +281,21 @@ describe("portrait sync helpers", () => {
 
   it("uses a stable upload directory", () => {
     expect(NARRATOR_PORTRAIT_UPLOAD_DIR).toBe("npc-narrator/portraits");
+  });
+
+  it("expands nested upload dirs for createDirectory", () => {
+    expect(portraitUploadDirSegments("npc-narrator/portraits")).toEqual([
+      "npc-narrator",
+      "npc-narrator/portraits",
+    ]);
+    expect(portraitUploadDirSegments("")).toEqual([]);
+    expect(portraitUploadDirSegments("single")).toEqual(["single"]);
+  });
+
+  it("detects only real already-exists directory errors", () => {
+    expect(isFilePickerDirectoryExistsError({ message: "EEXIST: directory already exists" })).toBe(true);
+    expect(isFilePickerDirectoryExistsError("Directory already exists")).toBe(true);
+    expect(isFilePickerDirectoryExistsError({ message: "Permission denied" })).toBe(false);
+    expect(isFilePickerDirectoryExistsError({ message: "path does not exist" })).toBe(false);
   });
 });
