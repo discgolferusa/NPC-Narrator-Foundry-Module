@@ -14,6 +14,12 @@ import {
   applyChatPortraitSrc,
   findActorForNpc,
   NARRATOR_CHAT_PORTRAIT,
+  NARRATOR_PORTRAIT_UPLOAD_DIR,
+  actorPortraitTokenUpdate,
+  isFilePickerDirectoryExistsError,
+  portraitFileExtension,
+  portraitUploadDirSegments,
+  portraitUploadFileStem,
   resolveChatPortraitSrc,
   shouldAcceptCampaignText,
   shouldMirrorCampaignTextToFoundryChat,
@@ -79,6 +85,39 @@ async function apiFetch(path, options = {}) {
   }
   return { response, data };
 }
+
+/** Binary GET for Foundry portrait sync (Bearer session). */
+async function apiFetchBinary(path) {
+  const base = editorBaseUrl();
+  if (!base) throw new Error("Set the Yaml Editor base URL in module settings.");
+  const response = await fetch(`${base}${path}`, {
+    headers: {
+      Accept: "image/*,application/octet-stream",
+      ...authHeaders(),
+    },
+  });
+  const contentType = response.headers.get("Content-Type") || "";
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const text = await response.text();
+      try {
+        const json = JSON.parse(text);
+        detail = json.error || json.detail || text;
+      } catch {
+        detail = text;
+      }
+    } catch {
+      detail = response.statusText;
+    }
+    const err = new Error(detail || `Portrait download failed (${response.status})`);
+    err.status = response.status;
+    throw err;
+  }
+  const blob = await response.blob();
+  return { response, blob, contentType };
+}
+
 
 async function ensureSignalR() {
   if (globalThis.signalR?.HubConnectionBuilder) return;
@@ -1467,35 +1506,65 @@ async function openActorNarratorMapping(actor) {
         <label>Narrator NPC (token target)</label>
         <select name="npcMap" id="npc-narrator-npc-map">${npcOptions}</select>
         <p class="notes">Used when chatting with this actor’s token. Leave blank to rely on name match.</p>
-      </div>` : `
+      </div>
+      <p class="notes">After saving a Narrator NPC map, use <strong>Sync Narrator portrait</strong> on the actor sheet to copy the closed-mouth still onto the sheet and prototype token.</p>` : `
       <p class="notes">Ask a GM to map Narrator NPC targets.</p>`}
     </div>`;
+
+  const buttons = [
+    {
+      action: "save",
+      label: "Save",
+      icon: "fas fa-save",
+      default: true,
+      callback: (_event, button) => {
+        const partyEl =
+          button.form?.elements?.party || button.form?.querySelector?.("#npc-narrator-party-map");
+        const npcEl =
+          button.form?.elements?.npcMap || button.form?.querySelector?.("#npc-narrator-npc-map");
+        return {
+          action: "save",
+          partyId: String(partyEl?.value || "").trim(),
+          npcId: String(npcEl?.value || "").trim(),
+        };
+      },
+    },
+  ];
+  if (canEditNpc && currentNpc) {
+    buttons.push({
+      action: "syncPortrait",
+      label: "Sync portrait",
+      icon: "fas fa-image",
+      callback: (_event, button) => {
+        const npcEl =
+          button.form?.elements?.npcMap || button.form?.querySelector?.("#npc-narrator-npc-map");
+        return {
+          action: "syncPortrait",
+          npcId: String(npcEl?.value || currentNpc || "").trim(),
+        };
+      },
+    });
+  }
+  buttons.push({ action: "cancel", label: "Cancel" });
 
   const result = await dialogWait({
     title: "NPC Narrator — Actor mapping",
     content,
-    buttons: [
-      {
-        action: "save",
-        label: "Save",
-        icon: "fas fa-save",
-        default: true,
-        callback: (_event, button) => {
-          const partyEl =
-            button.form?.elements?.party || button.form?.querySelector?.("#npc-narrator-party-map");
-          const npcEl =
-            button.form?.elements?.npcMap || button.form?.querySelector?.("#npc-narrator-npc-map");
-          return {
-            partyId: String(partyEl?.value || "").trim(),
-            npcId: String(npcEl?.value || "").trim(),
-          };
-        },
-      },
-      { action: "cancel", label: "Cancel" },
-    ],
+    buttons,
   });
 
   if (!result || result === "cancel" || typeof result !== "object") return;
+
+  if (result.action === "syncPortrait") {
+    try {
+      await syncNarratorPortraitToActor(actor, result.npcId || currentNpc || null);
+    } catch (err) {
+      console.error(`${MODULE_ID} portrait sync failed`, err);
+      ui.notifications.error(err.message || String(err));
+    }
+    return;
+  }
+
   try {
     if (canEditParty) {
       await savePartyMap(actor.id, result.partyId || null);
@@ -1509,6 +1578,93 @@ async function openActorNarratorMapping(actor) {
     ui.notifications.error(err.message || String(err));
   }
 }
+
+/**
+ * Download Narrator still portrait and apply as Foundry actor img + prototype token.
+ * @param {Actor} actor
+ * @param {string|null|undefined} npcIdOverride
+ */
+async function syncNarratorPortraitToActor(actor, npcIdOverride = null) {
+  if (!game.user?.isGM) {
+    throw new Error("Only a GM can sync Narrator portraits onto actors.");
+  }
+  if (!actor) {
+    throw new Error("Open an Actor sheet (or select a token) first.");
+  }
+  if (!getSession()?.sessionToken) {
+    throw new Error("Bind the Foundry world to NPC Narrator before syncing portraits.");
+  }
+
+  const npcId = String(npcIdOverride || resolveNpcIdForActor(actor) || "").trim();
+  if (!npcId) {
+    throw new Error("Map this actor to a Narrator NPC first.");
+  }
+
+  ui.notifications.info(`Downloading Narrator portrait for ${npcId}…`);
+  const { blob, contentType } = await apiFetchBinary(
+    `/api/foundry/npc-portrait?npc_id=${encodeURIComponent(npcId)}`,
+  );
+  if (!blob || blob.size < 8) {
+    throw new Error("Portrait download was empty.");
+  }
+
+  const ext = portraitFileExtension(contentType || blob.type, ".png");
+  const filename = `${portraitUploadFileStem(npcId)}${ext}`;
+  const file = new File([blob], filename, { type: contentType || blob.type || "image/png" });
+
+  await ensurePortraitUploadDirs();
+
+  const uploaded = await FilePicker.upload(
+    "data",
+    NARRATOR_PORTRAIT_UPLOAD_DIR,
+    file,
+    {},
+    { notify: false },
+  );
+  const path = String(uploaded?.path || uploaded || "").trim();
+  if (!path) {
+    throw new Error("Foundry file upload did not return a path.");
+  }
+
+  const update = actorPortraitTokenUpdate(path);
+  await actor.update(update);
+
+  // linked=false so unlinked NPC tokens on the current scene are included.
+  const tokens = typeof actor.getActiveTokens === "function" ? actor.getActiveTokens(false) : [];
+  let placedUpdated = 0;
+  for (const token of tokens || []) {
+    try {
+      await token.document.update({ "texture.src": path });
+      placedUpdated += 1;
+    } catch (err) {
+      console.warn(`${MODULE_ID} placed token portrait update skipped`, err);
+    }
+  }
+
+  if (placedUpdated > 0) {
+    ui.notifications.info(
+      `Synced Narrator portrait onto ${actor.name} (sheet, prototype token, and ${placedUpdated} placed token${placedUpdated === 1 ? "" : "s"}).`,
+    );
+  } else {
+    ui.notifications.info(
+      `Synced Narrator portrait onto ${actor.name} (sheet + prototype token). No placed tokens on this scene were updated.`,
+    );
+  }
+  return path;
+}
+
+/** Create npc-narrator then npc-narrator/portraits; Foundry does not mkdir -p. */
+async function ensurePortraitUploadDirs() {
+  for (const path of portraitUploadDirSegments(NARRATOR_PORTRAIT_UPLOAD_DIR)) {
+    try {
+      await FilePicker.createDirectory("data", path);
+    } catch (err) {
+      if (isFilePickerDirectoryExistsError(err)) continue;
+      throw new Error(`Could not create upload folder "${path}": ${err?.message || err}`);
+    }
+  }
+}
+
 
 async function openCharacterMapping() {
   const actor =
@@ -1542,6 +1698,19 @@ function addActorSheetNarratorButton(buttons, actor) {
         void openCreateNarratorNpcFromActor(actor);
       },
     });
+    if (getNpcOverrides()[actor.id] || guessNpcId(actor)) {
+      buttons.unshift({
+        label: "Sync Narrator portrait",
+        class: "npc-narrator-sync-portrait",
+        icon: "fas fa-image",
+        onclick: () => {
+          void syncNarratorPortraitToActor(actor).catch((err) => {
+            console.error(`${MODULE_ID} portrait sync failed`, err);
+            ui.notifications.error(err.message || String(err));
+          });
+        },
+      });
+    }
   }
 }
 
@@ -1563,6 +1732,18 @@ function addActorSheetV2NarratorControl(controls, actor) {
         void openCreateNarratorNpcFromActor(actor);
       },
     });
+    if (getNpcOverrides()[actor.id] || guessNpcId(actor)) {
+      controls.push({
+        icon: "fa-solid fa-image",
+        label: "Sync Narrator portrait",
+        onClick: () => {
+          void syncNarratorPortraitToActor(actor).catch((err) => {
+            console.error(`${MODULE_ID} portrait sync failed`, err);
+            ui.notifications.error(err.message || String(err));
+          });
+        },
+      });
+    }
   }
 }
 
@@ -1757,6 +1938,7 @@ Hooks.once("ready", async () => {
     },
     mapCharacter: openCharacterMapping,
     mapActor: openActorNarratorMapping,
+    syncPortrait: syncNarratorPortraitToActor,
     createNpcFromActor: openCreateNarratorNpcFromActor,
     createLocationFromScene: openCreateNarratorLocationFromScene,
     chat: () => promptMessageForTargetedNpc("chat"),

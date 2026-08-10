@@ -11,6 +11,12 @@ import {
   applyChatPortraitSrc,
   findActorForNpc,
   NARRATOR_CHAT_PORTRAIT,
+  NARRATOR_PORTRAIT_UPLOAD_DIR,
+  actorPortraitTokenUpdate,
+  isFilePickerDirectoryExistsError,
+  portraitFileExtension,
+  portraitUploadDirSegments,
+  portraitUploadFileStem,
   resolveChatPortraitSrc,
   shouldAcceptCampaignText,
   shouldMirrorCampaignTextToFoundryChat,
@@ -249,5 +255,47 @@ describe("chat portraits", () => {
     };
     expect(applyChatPortraitSrc(root, "icons/svg/book.svg")).toBe(true);
     expect(img._src).toBe("icons/svg/book.svg");
+  });
+});
+
+describe("portrait sync helpers", () => {
+  it("sanitizes npc ids into upload stems", () => {
+    expect(portraitUploadFileStem("Captain Vex!")).toBe("captain-vex");
+    expect(portraitUploadFileStem("")).toBe("npc");
+  });
+
+  it("builds actor img + prototype token update", () => {
+    expect(actorPortraitTokenUpdate("npc-narrator/portraits/a.png")).toEqual({
+      img: "npc-narrator/portraits/a.png",
+      "prototypeToken.texture.src": "npc-narrator/portraits/a.png",
+    });
+    expect(actorPortraitTokenUpdate("")).toBeNull();
+  });
+
+  it("maps content-types to file extensions", () => {
+    expect(portraitFileExtension("image/jpeg")).toBe(".jpg");
+    expect(portraitFileExtension("image/png")).toBe(".png");
+    expect(portraitFileExtension("image/webp")).toBe(".webp");
+    expect(portraitFileExtension(null)).toBe(".png");
+  });
+
+  it("uses a stable upload directory", () => {
+    expect(NARRATOR_PORTRAIT_UPLOAD_DIR).toBe("npc-narrator/portraits");
+  });
+
+  it("expands nested upload dirs for createDirectory", () => {
+    expect(portraitUploadDirSegments("npc-narrator/portraits")).toEqual([
+      "npc-narrator",
+      "npc-narrator/portraits",
+    ]);
+    expect(portraitUploadDirSegments("")).toEqual([]);
+    expect(portraitUploadDirSegments("single")).toEqual(["single"]);
+  });
+
+  it("detects only real already-exists directory errors", () => {
+    expect(isFilePickerDirectoryExistsError({ message: "EEXIST: directory already exists" })).toBe(true);
+    expect(isFilePickerDirectoryExistsError("Directory already exists")).toBe(true);
+    expect(isFilePickerDirectoryExistsError({ message: "Permission denied" })).toBe(false);
+    expect(isFilePickerDirectoryExistsError({ message: "path does not exist" })).toBe(false);
   });
 });

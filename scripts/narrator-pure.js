@@ -259,3 +259,85 @@ export function applyChatPortraitSrc(root, src) {
   }
   return false;
 }
+
+/**
+ * Safe filename stem for Foundry Data upload from a Narrator npc id.
+ * @param {string|null|undefined} npcId
+ */
+export function portraitUploadFileStem(npcId) {
+  const raw = String(npcId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return raw || "npc";
+}
+
+/**
+ * Build actor update payload for sheet portrait + prototype token art.
+ * @param {string} path Foundry data path (e.g. npc-narrator/portraits/foo.png)
+ */
+export function actorPortraitTokenUpdate(path) {
+  const src = String(path || "").trim();
+  if (!src) return null;
+  return {
+    img: src,
+    "prototypeToken.texture.src": src,
+  };
+}
+
+/**
+ * Extension for Content-Type / filename from a portrait HTTP response.
+ * @param {string|null|undefined} contentType
+ * @param {string|null|undefined} fallbackExt
+ */
+export function portraitFileExtension(contentType, fallbackExt = ".png") {
+  const ct = String(contentType || "").toLowerCase();
+  if (ct.includes("jpeg") || ct.includes("jpg")) return ".jpg";
+  if (ct.includes("webp")) return ".webp";
+  if (ct.includes("png")) return ".png";
+  const fb = String(fallbackExt || ".png");
+  return fb.startsWith(".") ? fb : `.${fb}`;
+}
+
+/**
+ * Relative upload folder under Foundry Data for Narrator stills.
+ */
+export const NARRATOR_PORTRAIT_UPLOAD_DIR = "npc-narrator/portraits";
+
+/**
+ * Cumulative directory paths Foundry must create one level at a time
+ * (createDirectory does not create intermediate folders).
+ * @param {string|null|undefined} dir
+ * @returns {string[]}
+ */
+export function portraitUploadDirSegments(dir) {
+  const parts = String(dir || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const out = [];
+  let acc = "";
+  for (const part of parts) {
+    acc = acc ? `${acc}/${part}` : part;
+    out.push(acc);
+  }
+  return out;
+}
+
+/**
+ * True when FilePicker.createDirectory failed because the folder already exists.
+ * Keep this narrow so real creation failures are not swallowed.
+ * @param {unknown} err
+ */
+export function isFilePickerDirectoryExistsError(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (!msg) return false;
+  // Foundry / Node-ish messages seen in the wild.
+  if (/\beexist\b/.test(msg)) return true;
+  if (/already exists/.test(msg)) return true;
+  if (/directory exists/.test(msg)) return true;
+  return false;
+}
+
