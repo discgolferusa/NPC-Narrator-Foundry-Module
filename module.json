@@ -2,7 +2,7 @@
   "id": "npc-narrator",
   "title": "NPC Narrator",
   "description": "Link a Foundry world to an NPC Narrator campaign. Chat or whisper to NPCs from tokens; replies appear as Narrator and NPC chat lines. TTS follows the GM's audio recipient (e.g. Discord).",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "compatibility": {
     "minimum": "13",
     "verified": "14"
@@ -21,7 +21,7 @@
   ],
   "url": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module",
   "manifest": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/latest/download/module.json",
-  "download": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/download/v0.2.9/module.zip",
+  "download": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/download/v0.2.10/module.zip",
   "bugs": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/issues",
   "changelog": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases",
   "readme": "README.md",
