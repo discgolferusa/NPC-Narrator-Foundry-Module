@@ -17,7 +17,7 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 
 ## Install
 
-Every push to `main` publishes a versioned Foundry package (`module.zip` + `module.json`) to GitHub Releases. This is the same install/update pattern used by typical Foundry modules.
+Every push to `main` publishes a versioned Foundry package (`module.zip` + `module.json`) to GitHub Releases. The patch version is **bumped automatically** so Foundry can detect updates without hand-editing `module.json`.
 
 ### Install from Foundry UI (recommended)
 
@@ -46,7 +46,7 @@ Install-via-URL works immediately after a release. Listing in Foundry’s built-
 2. Package URL: `https://github.com/discgolferusa/NPC-Narrator-Foundry-Module`
 3. For each published version, submit the **version-specific** manifest (not `/latest/`), e.g.  
    `https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/download/v0.2.9/module.json`
-4. After approval, bump `version` in `module.json` on `main`, merge, then add that new release’s version-specific manifest URL in the Foundry package admin.
+4. After approval, each new `main` merge auto-bumps the patch version and publishes a release. For the Foundry website listing, add each new **version-specific** manifest URL in the package admin (or use Foundry’s package release API).
 
 See Foundry’s [package release notes](https://foundryvtt.wiki/en/development/guides/releases-and-history) for why `/latest/` is for clients, while the website listing needs a pinned release manifest.
 
@@ -132,7 +132,11 @@ Foundry module → Yaml Editor (pairing, Bearer APIs, SignalR)
 
 See yaml-editor `docs/FOUNDRY_INTEGRATION.md` and this repo’s `docs/FOUNDRY_PACKAGE.md` for packaging / Foundry listing notes.
 
-## Security notes
+## License
+
+Proprietary — see `LICENSE`. You may use the module with Foundry / NPC Narrator;
+redistribution, resale, and modification for redistribution are not allowed.
+
 
 - Chat and dialog content from the API / LLM is HTML-escaped before render.
 - Bind / unbind are GM-only (`openBindDialog`, `bindWithPairingCode`, `unbindSession`, `game.npcNarrator.bind/unbind`).

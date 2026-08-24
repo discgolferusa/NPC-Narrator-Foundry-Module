@@ -1,16 +1,22 @@
-MIT License
+NPC Narrator Foundry Module — Proprietary License
 
-Copyright (c) 2026 NPC Narrator
+Copyright (c) 2026 NPC Narrator. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Permission is granted to download and use this software solely as a
+Foundry Virtual Tabletop module for your own personal or table use
+with the NPC Narrator service.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+You may NOT, without prior written permission from the copyright holder:
+
+1. Modify, adapt, translate, reverse engineer, or create derivative works
+   of this software (except as required for ordinary personal use of the
+   unmodified module inside Foundry VTT).
+2. Redistribute, publish, sublicense, rent, lease, or sell this software,
+   or any modified version of it, whether free or paid.
+3. Host, mirror, or repackage this software for others to download
+   (including as part of a commercial product, Patreon reward, or paid
+   Foundry content pack).
+4. Remove or alter this license notice or copyright notices.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -19,3 +25,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+For licensing inquiries: https://www.npcnarrator.com
+
+Third-party notice: `lib/signalr.min.js` is the Microsoft SignalR JavaScript
+client and remains under its own Apache License 2.0 terms from Microsoft.

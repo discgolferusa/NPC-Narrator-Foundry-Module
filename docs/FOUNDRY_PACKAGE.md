@@ -34,10 +34,12 @@ Folder name **must** equal `module.json` → `id` (`npc-narrator`).
 Push to `main` runs `.github/workflows/package-on-main.yml`:
 
 1. Tests
-2. Builds `dist/module.zip` + `dist/module.json`
-3. Creates/updates GitHub release tag `v{version}` from `module.json`
+2. **Computes the next version automatically** (patch +1 from the latest `v*` release tag; first release uses `module.json`)
+3. Writes that version into `module.json` and commits it with `[skip ci]`
+4. Builds `dist/module.zip` + `dist/module.json`
+5. Creates/updates GitHub release tag `v{version}`
 
-**Important:** bump `version` in `module.json` whenever you want Foundry clients to see an update. Re-publishing the same version refreshes assets but will not prompt already-installed worlds to update.
+You do **not** need to bump `version` for ordinary updates. To jump to a new major/minor (e.g. `1.0.0`), set that version in `module.json` once and merge — CI will publish it, then resume patch bumps from there.
 
 ## SignalR
 
