@@ -17,11 +17,47 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 
 ## Install
 
-1. Copy this folder into Foundry `Data/modules/npc-narrator` (folder name must match `module.json` `id`).
-2. Enable **NPC Narrator** in the world module list.
-3. Open **Configure Settings → Module Settings → NPC Narrator**:
+Every push to `main` publishes a versioned Foundry package (`module.zip` + `module.json`) to GitHub Releases. This is the same install/update pattern used by typical Foundry modules.
+
+### Install from Foundry UI (recommended)
+
+In Foundry Setup: **Add-on Modules → Install Module**, paste:
+
+```text
+https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/latest/download/module.json
+```
+
+Foundry downloads the zip, places it under `Data/modules/npc-narrator/`, and can later check that same manifest URL for updates when `version` increases.
+
+### Unzip into Foundry (manual)
+
+1. Download [`module.zip`](https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/latest/download/module.zip).
+2. Unzip into Foundry `Data/modules/` so you have `Data/modules/npc-narrator/module.json` (folder name must match `module.json` `id`).
+3. Enable **NPC Narrator** in the world module list.
+4. Open **Configure Settings → Module Settings → NPC Narrator**:
    - **Yaml Editor base URL** defaults to `https://www.npcnarrator.com` (change only if you self-host)
    - Use **Campaign pairing → Bind / Unbind** and paste a one-time pairing code from the DM console
+
+### Appear in Foundry’s public module browser
+
+Install-via-URL works immediately after a release. Listing in Foundry’s built-in package directory is a separate one-time creator step:
+
+1. Create a Foundry account and open the [package submission form](https://foundryvtt.com/packages/submit/).
+2. Package URL: `https://github.com/discgolferusa/NPC-Narrator-Foundry-Module`
+3. For each published version, submit the **version-specific** manifest (not `/latest/`), e.g.  
+   `https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/download/v0.2.9/module.json`
+4. After approval, bump `version` in `module.json` on `main`, merge, then add that new release’s version-specific manifest URL in the Foundry package admin.
+
+See Foundry’s [package release notes](https://foundryvtt.wiki/en/development/guides/releases-and-history) for why `/latest/` is for clients, while the website listing needs a pinned release manifest.
+
+### Local package (optional)
+
+```bash
+npm ci
+npm run package
+```
+
+Creates `dist/module.zip` (top-level folder `npc-narrator/`, including `lib/signalr.min.js`).
 
 ## GM setup
 
@@ -94,7 +130,7 @@ Foundry module → Yaml Editor (pairing, Bearer APIs, SignalR)
               → Middleware (/npc-turn with include_audio)
 ```
 
-See yaml-editor `docs/FOUNDRY_INTEGRATION.md`.
+See yaml-editor `docs/FOUNDRY_INTEGRATION.md` and this repo’s `docs/FOUNDRY_PACKAGE.md` for packaging / Foundry listing notes.
 
 ## Security notes
 
