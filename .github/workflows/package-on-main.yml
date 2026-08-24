@@ -33,35 +33,51 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Read module version
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./module.json').version")
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
       - name: Build installable zip
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
+          MODULE_VERSION: ${{ steps.meta.outputs.version }}
         run: npm run package
 
-      - name: Publish latest release assets
+      - name: Publish versioned Foundry release
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           artifactErrorsFailBuild: true
-          artifacts: dist/npc-narrator.zip,dist/module.json
+          artifacts: dist/module.zip,dist/module.json
           removeArtifacts: true
           replacesArtifacts: true
           makeLatest: true
           commit: ${{ github.sha }}
-          tag: latest
-          name: Latest Foundry module package
+          tag: ${{ steps.meta.outputs.tag }}
+          name: NPC Narrator ${{ steps.meta.outputs.tag }}
           body: |
-            Installable **NPC Narrator** Foundry module built from `main`.
+            Installable **NPC Narrator** Foundry module `${{ steps.meta.outputs.tag }}`.
 
-            ### Manual install
-            1. Download [`npc-narrator.zip`](https://github.com/${{ github.repository }}/releases/latest/download/npc-narrator.zip)
-            2. Unzip into your Foundry `Data/modules/` folder
-            3. You should end up with `Data/modules/npc-narrator/module.json`
-            4. Enable **NPC Narrator** in the world module list
-
-            ### Foundry "Install Module" URL
+            ### Install from Foundry (recommended)
+            **Add-on Modules → Install Module**, paste:
             ```
             https://github.com/${{ github.repository }}/releases/latest/download/module.json
+            ```
+
+            ### Manual unzip
+            1. Download [`module.zip`](https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/module.zip)
+            2. Unzip into Foundry `Data/modules/`
+            3. Confirm `Data/modules/npc-narrator/module.json` exists
+            4. Enable **NPC Narrator** in the world module list
+
+            ### Foundry package directory (creators)
+            When publishing a new version on foundryvtt.com, use this **version-specific** manifest URL (not `/latest/`):
+            ```
+            https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/module.json
             ```
 
             Built from commit `${{ github.sha }}`.

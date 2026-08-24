@@ -1,6 +1,6 @@
 /**
  * Stages and zips the Foundry module for Data/modules/ install.
- * Output: dist/npc-narrator.zip with top-level folder matching module.json id.
+ * Output: dist/module.zip with top-level folder matching module.json id.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -11,16 +11,32 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, "..");
 
 /** Files and directories included in the installable package (relative to repo root). */
-export const PACKAGE_ROOT_FILES = ["module.json", "README.md"];
-export const PACKAGE_DIRS = ["scripts", "styles", "templates"];
+export const PACKAGE_ROOT_FILES = ["module.json", "README.md", "LICENSE", "CHANGELOG.md"];
+export const PACKAGE_DIRS = ["scripts", "styles", "templates", "lib"];
+export const ZIP_NAME = "module.zip";
 
-export function readModuleId(repoRoot = REPO_ROOT) {
+export function readModuleManifest(repoRoot = REPO_ROOT) {
   const manifestPath = path.join(repoRoot, "module.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   if (!manifest.id || typeof manifest.id !== "string") {
     throw new Error("module.json is missing a string id");
   }
-  return manifest.id;
+  if (!manifest.version || typeof manifest.version !== "string") {
+    throw new Error("module.json is missing a string version");
+  }
+  return manifest;
+}
+
+export function readModuleId(repoRoot = REPO_ROOT) {
+  return readModuleManifest(repoRoot).id;
+}
+
+export function readModuleVersion(repoRoot = REPO_ROOT) {
+  return readModuleManifest(repoRoot).version;
+}
+
+export function releaseTagForVersion(version) {
+  return version.startsWith("v") ? version : `v${version}`;
 }
 
 export function listPackageRelativePaths(repoRoot = REPO_ROOT) {
@@ -86,20 +102,29 @@ function copyDir(src, dest) {
 }
 
 /**
- * Write a release copy of module.json with stable GitHub download URLs.
+ * Write a release copy of module.json with Foundry-compatible URLs:
+ * - manifest: stable /releases/latest/download/module.json (update checks)
+ * - download: version-specific zip for this release
  */
 export function writeReleaseManifest(
   repoRoot = REPO_ROOT,
   outPath,
   {
     repository = "discgolferusa/NPC-Narrator-Foundry-Module",
-    zipName = "npc-narrator.zip",
+    version = readModuleVersion(repoRoot),
+    zipName = ZIP_NAME,
   } = {},
 ) {
-  const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "module.json"), "utf8"));
-  const base = `https://github.com/${repository}/releases/latest/download`;
-  manifest.manifest = `${base}/module.json`;
-  manifest.download = `${base}/${zipName}`;
+  const manifest = readModuleManifest(repoRoot);
+  const tag = releaseTagForVersion(version);
+  const latestBase = `https://github.com/${repository}/releases/latest/download`;
+  const versionBase = `https://github.com/${repository}/releases/download/${tag}`;
+  manifest.version = version;
+  manifest.manifest = `${latestBase}/module.json`;
+  manifest.download = `${versionBase}/${zipName}`;
+  manifest.bugs = manifest.bugs || `https://github.com/${repository}/issues`;
+  manifest.changelog = manifest.changelog || `https://github.com/${repository}/releases`;
+  manifest.license = "LICENSE";
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;
@@ -136,18 +161,36 @@ export function createZipFromStaging(moduleId, stagingRoot, zipPath) {
   return absZip;
 }
 
+/**
+ * After staging, overwrite the staged module.json with release URLs so the zip
+ * and the standalone release manifest stay identical (Foundry best practice).
+ */
 export function packageModule({
   repoRoot = REPO_ROOT,
   outDir = path.join(REPO_ROOT, "dist"),
   repository = process.env.GITHUB_REPOSITORY || "discgolferusa/NPC-Narrator-Foundry-Module",
+  version = process.env.MODULE_VERSION || readModuleVersion(repoRoot),
 } = {}) {
-  const { moduleId, stagingRoot } = stagePackage(repoRoot, outDir);
-  const zipName = `${moduleId}.zip`;
-  const zipPath = path.join(outDir, zipName);
+  const { moduleId, moduleDir, stagingRoot } = stagePackage(repoRoot, outDir);
+  const releaseManifest = writeReleaseManifest(repoRoot, path.join(moduleDir, "module.json"), {
+    repository,
+    version,
+    zipName: ZIP_NAME,
+  });
+  const zipPath = path.join(outDir, ZIP_NAME);
   createZipFromStaging(moduleId, stagingRoot, zipPath);
   const manifestPath = path.join(outDir, "module.json");
-  writeReleaseManifest(repoRoot, manifestPath, { repository, zipName });
-  return { moduleId, zipPath, manifestPath, stagingRoot };
+  fs.copyFileSync(path.join(moduleDir, "module.json"), manifestPath);
+  return {
+    moduleId,
+    version: releaseManifest.version,
+    tag: releaseTagForVersion(releaseManifest.version),
+    zipPath,
+    manifestPath,
+    stagingRoot,
+    download: releaseManifest.download,
+    manifest: releaseManifest.manifest,
+  };
 }
 
 const isMain =
@@ -155,6 +198,8 @@ const isMain =
 
 if (isMain) {
   const result = packageModule();
-  console.log(`Packaged ${result.moduleId} -> ${result.zipPath}`);
+  console.log(`Packaged ${result.moduleId}@${result.version} -> ${result.zipPath}`);
+  console.log(`Release tag: ${result.tag}`);
   console.log(`Release manifest -> ${result.manifestPath}`);
+  console.log(`download: ${result.download}`);
 }
