@@ -1,0 +1,68 @@
+name: Package Foundry module
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: foundry-module-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build installable zip
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: npm run package
+
+      - name: Publish latest release assets
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: dist/npc-narrator.zip,dist/module.json
+          removeArtifacts: true
+          replacesArtifacts: true
+          makeLatest: true
+          commit: ${{ github.sha }}
+          tag: latest
+          name: Latest Foundry module package
+          body: |
+            Installable **NPC Narrator** Foundry module built from `main`.
+
+            ### Manual install
+            1. Download [`npc-narrator.zip`](https://github.com/${{ github.repository }}/releases/latest/download/npc-narrator.zip)
+            2. Unzip into your Foundry `Data/modules/` folder
+            3. You should end up with `Data/modules/npc-narrator/module.json`
+            4. Enable **NPC Narrator** in the world module list
+
+            ### Foundry "Install Module" URL
+            ```
+            https://github.com/${{ github.repository }}/releases/latest/download/module.json
+            ```
+
+            Built from commit `${{ github.sha }}`.
+          token: ${{ secrets.GITHUB_TOKEN }}

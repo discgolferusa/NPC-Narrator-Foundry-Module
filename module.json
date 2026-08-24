@@ -19,6 +19,8 @@
     "styles/npc-narrator.css"
   ],
   "url": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module",
+  "manifest": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/latest/download/module.json",
+  "download": "https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/latest/download/npc-narrator.zip",
   "readme": "README.md",
   "license": "MIT",
   "socket": false

@@ -17,11 +17,33 @@ Foundry VTT **v13–v14** module that links a world to an [NPC Narrator](https:/
 
 ## Install
 
-1. Copy this folder into Foundry `Data/modules/npc-narrator` (folder name must match `module.json` `id`).
-2. Enable **NPC Narrator** in the world module list.
-3. Open **Configure Settings → Module Settings → NPC Narrator**:
+Every push to `main` publishes a zip to the GitHub **[latest release](https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/latest)**.
+
+### Unzip into Foundry (manual)
+
+1. Download [`npc-narrator.zip`](https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/latest/download/npc-narrator.zip).
+2. Unzip into Foundry `Data/modules/` so you have `Data/modules/npc-narrator/module.json` (folder name must match `module.json` `id`).
+3. Enable **NPC Narrator** in the world module list.
+4. Open **Configure Settings → Module Settings → NPC Narrator**:
    - **Yaml Editor base URL** defaults to `https://www.npcnarrator.com` (change only if you self-host)
    - Use **Campaign pairing → Bind / Unbind** and paste a one-time pairing code from the DM console
+
+### Install from Foundry UI
+
+In Foundry: **Add-on Modules → Install Module**, paste:
+
+```text
+https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/latest/download/module.json
+```
+
+### Local package (optional)
+
+```bash
+npm ci
+npm run package
+```
+
+Creates `dist/npc-narrator.zip` (same layout as the release asset).
 
 ## GM setup
 

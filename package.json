@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "package": "node tools/package-module.mjs"
   },
   "devDependencies": {
     "vitest": "^3.2.4"
