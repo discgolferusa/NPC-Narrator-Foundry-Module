@@ -132,7 +132,11 @@ Foundry module → Yaml Editor (pairing, Bearer APIs, SignalR)
 
 See yaml-editor `docs/FOUNDRY_INTEGRATION.md` and this repo’s `docs/FOUNDRY_PACKAGE.md` for packaging / Foundry listing notes.
 
-## Security notes
+## License
+
+Proprietary — see `LICENSE`. You may use the module with Foundry / NPC Narrator;
+redistribution, resale, and modification for redistribution are not allowed.
+
 
 - Chat and dialog content from the API / LLM is HTML-escaped before render.
 - Bind / unbind are GM-only (`openBindDialog`, `bindWithPairingCode`, `unbindSession`, `game.npcNarrator.bind/unbind`).
