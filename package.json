@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "package": "node tools/package-module.mjs"
+    "package": "node tools/package-module.mjs",
+    "version:next": "node tools/version.mjs"
   },
   "devDependencies": {
     "vitest": "^3.2.4"

@@ -16,10 +16,17 @@ concurrency:
 
 jobs:
   package:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message || '', '[skip ci]') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch release tags
+        run: git fetch --tags --force
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -33,19 +40,44 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Read module version
+      - name: Compute next version
         id: meta
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          VERSION=$(node -p "require('./module.json').version")
+          VERSION=$(node tools/version.mjs)
           TAG="v${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Next Foundry module version: ${VERSION}"
+
+      - name: Write version into module.json
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node tools/version.mjs --write "${{ steps.meta.outputs.version }}"
 
       - name: Build installable zip
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           MODULE_VERSION: ${{ steps.meta.outputs.version }}
         run: npm run package
+
+      - name: Commit version bump on main
+        if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add module.json
+          if git diff --staged --quiet; then
+            echo "module.json already at ${{ steps.meta.outputs.version }}"
+          else
+            git commit -m "chore: release v${{ steps.meta.outputs.version }} [skip ci]"
+            git push
+          fi
+
+      - name: Resolve release commit
+        id: release_commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Publish versioned Foundry release
         uses: ncipollo/release-action@v1
@@ -56,11 +88,11 @@ jobs:
           removeArtifacts: true
           replacesArtifacts: true
           makeLatest: true
-          commit: ${{ github.sha }}
+          commit: ${{ steps.release_commit.outputs.sha }}
           tag: ${{ steps.meta.outputs.tag }}
           name: NPC Narrator ${{ steps.meta.outputs.tag }}
           body: |
-            Installable **NPC Narrator** Foundry module `${{ steps.meta.outputs.tag }}`.
+            Installable **NPC Narrator** Foundry module `${{ steps.meta.outputs.tag }}` (version bumped automatically on `main`).
 
             ### Install from Foundry (recommended)
             **Add-on Modules → Install Module**, paste:
@@ -80,5 +112,5 @@ jobs:
             https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/module.json
             ```
 
-            Built from commit `${{ github.sha }}`.
+            Built from commit `${{ steps.release_commit.outputs.sha }}`.
           token: ${{ secrets.GITHUB_TOKEN }}
