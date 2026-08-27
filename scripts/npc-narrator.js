@@ -167,6 +167,9 @@ async function startHub() {
       // Bearer token auth — do not send cookies. Credentials + ACAO:* is blocked by browsers
       // when Foundry (e.g. http://localhost:30000) talks to the Yaml Editor origin.
       withCredentials: false,
+      // Match the Discord bot: allow LongPolling when WebSockets are blocked (common behind
+      // reverse proxies / mixed content), so JoinAsFoundry presence still registers.
+      transport: signalR.HttpTransportType.WebSockets | signalR.HttpTransportType.LongPolling,
     })
     .withAutomaticReconnect()
     .build();

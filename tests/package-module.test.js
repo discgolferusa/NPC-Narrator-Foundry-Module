@@ -105,6 +105,9 @@ describe("package-module (functional)", () => {
     expect(fs.existsSync(path.join(moduleDir, "module.json"))).toBe(true);
     expect(fs.existsSync(path.join(moduleDir, "LICENSE"))).toBe(true);
     expect(fs.existsSync(path.join(moduleDir, "scripts", "npc-narrator.js"))).toBe(true);
+    const hubClient = fs.readFileSync(path.join(moduleDir, "scripts", "npc-narrator.js"), "utf8");
+    expect(hubClient).toContain("HttpTransportType.WebSockets");
+    expect(hubClient).toContain("HttpTransportType.LongPolling");
     expect(fs.existsSync(path.join(moduleDir, "lib", "signalr.min.js"))).toBe(true);
     expect(fs.existsSync(path.join(moduleDir, "styles", "npc-narrator.css"))).toBe(true);
     expect(fs.existsSync(path.join(moduleDir, "templates", "pairing.hbs"))).toBe(true);
