@@ -38,17 +38,6 @@ Foundry downloads the zip, places it under `Data/modules/npc-narrator/`, and can
    - **Yaml Editor base URL** defaults to `https://www.npcnarrator.com` (change only if you self-host)
    - Use **Campaign pairing → Bind / Unbind** and paste a one-time pairing code from the DM console
 
-### Appear in Foundry’s public module browser
-
-Install-via-URL works immediately after a release. Listing in Foundry’s built-in package directory is a separate one-time creator step:
-
-1. Create a Foundry account and open the [package submission form](https://foundryvtt.com/packages/submit/).
-2. Package URL: `https://github.com/discgolferusa/NPC-Narrator-Foundry-Module`
-3. For each published version, submit the **version-specific** manifest (not `/latest/`), e.g.  
-   `https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases/download/v0.2.9/module.json`
-4. After approval, each new `main` merge auto-bumps the patch version and publishes a release. For the Foundry website listing, add each new **version-specific** manifest URL in the package admin (or use Foundry’s package release API).
-
-See Foundry’s [package release notes](https://foundryvtt.wiki/en/development/guides/releases-and-history) for why `/latest/` is for clients, while the website listing needs a pinned release manifest.
 
 ### Local package (optional)
 
