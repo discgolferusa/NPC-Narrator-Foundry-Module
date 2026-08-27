@@ -866,16 +866,18 @@ async function unbindSession() {
   }
   const session = getSession();
   const base = editorBaseUrl();
-  // Revoke server session first so the GM console Foundry pill flips off immediately
-  // (foundry_connected is session OR hub — stopHub alone leaves the session flag true).
+  // Revoke server session first so hub eviction + devicesChanged fire before stopHub.
   if (session?.sessionToken && base) {
     try {
-      await fetch(`${base}/api/foundry/sessions`, {
+      const res = await fetch(`${base}/api/foundry/sessions`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${session.sessionToken}`,
         },
       });
+      if (!res.ok) {
+        console.warn(`${MODULE_ID} server session revoke returned ${res.status}`);
+      }
     } catch (err) {
       console.warn(`${MODULE_ID} server session revoke failed`, err);
     }
