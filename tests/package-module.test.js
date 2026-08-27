@@ -110,11 +110,13 @@ describe("package-module (functional)", () => {
     expect(hubClient).toContain("HttpTransportType.LongPolling");
     expect(hubClient).toContain('method: "DELETE"');
     expect(hubClient).toContain("/api/foundry/sessions");
-    // DELETE must run before stopHub so readiness does not wait on socket close.
+    // DELETE, then clear local session, then stopHub — avoids reconnect re-Join after revoke.
     const unbindStart = hubClient.indexOf("async function unbindSession");
     expect(unbindStart).toBeGreaterThan(-1);
-    const unbindSlice = hubClient.slice(unbindStart, unbindStart + 1200);
-    expect(unbindSlice.indexOf('method: "DELETE"')).toBeLessThan(unbindSlice.indexOf("await stopHub()"));
+    const unbindSlice = hubClient.slice(unbindStart, unbindStart + 1600);
+    expect(unbindSlice.indexOf('method: "DELETE"')).toBeLessThan(unbindSlice.indexOf("await setSession(null)"));
+    expect(unbindSlice.indexOf("await setSession(null)")).toBeLessThan(unbindSlice.indexOf("await stopHub()"));
+    expect(hubClient).toContain("accessTokenFactory: () => getSession()?.sessionToken ?? \"\"");
     expect(fs.existsSync(path.join(moduleDir, "lib", "signalr.min.js"))).toBe(true);
     expect(fs.existsSync(path.join(moduleDir, "styles", "npc-narrator.css"))).toBe(true);
     expect(fs.existsSync(path.join(moduleDir, "templates", "pairing.hbs"))).toBe(true);

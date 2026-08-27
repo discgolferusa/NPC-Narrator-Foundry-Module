@@ -139,13 +139,14 @@ async function stopHub() {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
   }
-  if (hubConnection) {
+  const connection = hubConnection;
+  hubConnection = null;
+  if (connection) {
     try {
-      await hubConnection.stop();
+      await connection.stop();
     } catch {
       /* ignore */
     }
-    hubConnection = null;
   }
 }
 
@@ -163,7 +164,8 @@ async function startHub() {
 
   hubConnection = new signalR.HubConnectionBuilder()
     .withUrl(`${base}/hubs/campaign-audio`, {
-      accessTokenFactory: () => session.sessionToken,
+      // Always read the live session — a closed-over token lets reconnect re-Join after unbind.
+      accessTokenFactory: () => getSession()?.sessionToken ?? "",
       // Bearer token auth — do not send cookies. Credentials + ACAO:* is blocked by browsers
       // when Foundry (e.g. http://localhost:30000) talks to the Yaml Editor origin.
       withCredentials: false,
@@ -179,10 +181,12 @@ async function startHub() {
   });
 
   hubConnection.onreconnected(async () => {
+    const live = getSession();
+    if (!live?.sessionToken || !hubConnection) return;
     await hubConnection.invoke(
       "JoinAsFoundry",
-      session.sessionToken,
-      session.deviceLabel || `Foundry ${game.world?.id || ""}`
+      live.sessionToken,
+      live.deviceLabel || `Foundry ${game.world?.id || ""}`
     );
   });
 
@@ -882,8 +886,9 @@ async function unbindSession() {
       console.warn(`${MODULE_ID} server session revoke failed`, err);
     }
   }
-  await stopHub();
+  // Drop local session before stopHub so withAutomaticReconnect cannot re-JoinAsFoundry.
   await setSession(null);
+  await stopHub();
   partyCharactersCache = null;
   npcsCache = null;
   locationsCache = null;
