@@ -180,6 +180,14 @@ async function startHub() {
     void handleCampaignText(payload);
   });
 
+  hubConnection.on("forceDisconnect", () => {
+    // Server revoked the session — drop hub without waiting for ClientTimeout.
+    void (async () => {
+      await setSession(null);
+      await stopHub();
+    })();
+  });
+
   hubConnection.onreconnected(async () => {
     const live = getSession();
     if (!live?.sessionToken || !hubConnection) return;
@@ -199,7 +207,7 @@ async function startHub() {
 
   heartbeatTimer = setInterval(() => {
     hubConnection?.invoke("Heartbeat").catch(() => {});
-  }, 30000);
+  }, 15000);
 
   ui.notifications.info("NPC Narrator: connected to campaign channel.");
 }

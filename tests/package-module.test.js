@@ -110,6 +110,8 @@ describe("package-module (functional)", () => {
     expect(hubClient).toContain("HttpTransportType.LongPolling");
     expect(hubClient).toContain('method: "DELETE"');
     expect(hubClient).toContain("/api/foundry/sessions");
+    expect(hubClient).toContain("forceDisconnect");
+    expect(hubClient).toContain("15000");
     // DELETE, then clear local session, then stopHub — avoids reconnect re-Join after revoke.
     const unbindStart = hubClient.indexOf("async function unbindSession");
     expect(unbindStart).toBeGreaterThan(-1);
