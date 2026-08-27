@@ -864,7 +864,21 @@ async function unbindSession() {
     ui.notifications.error("Only the GM can unbind NPC Narrator.");
     return;
   }
+  const session = getSession();
+  const base = editorBaseUrl();
   await stopHub();
+  if (session?.sessionToken && base) {
+    try {
+      await fetch(`${base}/api/foundry/sessions`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${session.sessionToken}`,
+        },
+      });
+    } catch (err) {
+      console.warn(`${MODULE_ID} server session revoke failed`, err);
+    }
+  }
   await setSession(null);
   partyCharactersCache = null;
   npcsCache = null;
