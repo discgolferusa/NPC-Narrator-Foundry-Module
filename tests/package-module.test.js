@@ -111,13 +111,13 @@ describe("package-module (functional)", () => {
     expect(hubClient).toContain('method: "DELETE"');
     expect(hubClient).toContain("/api/foundry/sessions");
     expect(hubClient).toContain("forceDisconnect");
-    expect(hubClient).toContain("15000");
-    // DELETE, then clear local session, then stopHub — avoids reconnect re-Join after revoke.
+    expect(hubClient).toContain("10000");
+    // Clear local session, then DELETE, then stopHub — blocks reconnect and flips presence.
     const unbindStart = hubClient.indexOf("async function unbindSession");
     expect(unbindStart).toBeGreaterThan(-1);
     const unbindSlice = hubClient.slice(unbindStart, unbindStart + 1600);
-    expect(unbindSlice.indexOf('method: "DELETE"')).toBeLessThan(unbindSlice.indexOf("await setSession(null)"));
-    expect(unbindSlice.indexOf("await setSession(null)")).toBeLessThan(unbindSlice.indexOf("await stopHub()"));
+    expect(unbindSlice.indexOf("await setSession(null)")).toBeLessThan(unbindSlice.indexOf('method: "DELETE"'));
+    expect(unbindSlice.indexOf('method: "DELETE"')).toBeLessThan(unbindSlice.indexOf("await stopHub()"));
     expect(hubClient).toContain("accessTokenFactory: () => getSession()?.sessionToken ?? \"\"");
     expect(fs.existsSync(path.join(moduleDir, "lib", "signalr.min.js"))).toBe(true);
     expect(fs.existsSync(path.join(moduleDir, "styles", "npc-narrator.css"))).toBe(true);

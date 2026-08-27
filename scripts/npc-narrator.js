@@ -207,8 +207,7 @@ async function startHub() {
 
   heartbeatTimer = setInterval(() => {
     hubConnection?.invoke("Heartbeat").catch(() => {});
-  }, 15000);
-
+  }, 10000);
   ui.notifications.info("NPC Narrator: connected to campaign channel.");
 }
 
@@ -878,13 +877,15 @@ async function unbindSession() {
   }
   const session = getSession();
   const base = editorBaseUrl();
-  // Revoke server session first so hub eviction + devicesChanged fire before stopHub.
-  if (session?.sessionToken && base) {
+  const token = session?.sessionToken;
+  // Clear local session first so withAutomaticReconnect cannot re-Join during DELETE.
+  await setSession(null);
+  if (token && base) {
     try {
       const res = await fetch(`${base}/api/foundry/sessions`, {
         method: "DELETE",
         headers: {
-          Authorization: `Bearer ${session.sessionToken}`,
+          Authorization: `Bearer ${token}`,
         },
       });
       if (!res.ok) {
@@ -894,8 +895,6 @@ async function unbindSession() {
       console.warn(`${MODULE_ID} server session revoke failed`, err);
     }
   }
-  // Drop local session before stopHub so withAutomaticReconnect cannot re-JoinAsFoundry.
-  await setSession(null);
   await stopHub();
   partyCharactersCache = null;
   npcsCache = null;
