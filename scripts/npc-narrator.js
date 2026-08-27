@@ -866,7 +866,8 @@ async function unbindSession() {
   }
   const session = getSession();
   const base = editorBaseUrl();
-  await stopHub();
+  // Revoke server session first so the GM console Foundry pill flips off immediately
+  // (foundry_connected is session OR hub — stopHub alone leaves the session flag true).
   if (session?.sessionToken && base) {
     try {
       await fetch(`${base}/api/foundry/sessions`, {
@@ -879,6 +880,7 @@ async function unbindSession() {
       console.warn(`${MODULE_ID} server session revoke failed`, err);
     }
   }
+  await stopHub();
   await setSession(null);
   partyCharactersCache = null;
   npcsCache = null;
