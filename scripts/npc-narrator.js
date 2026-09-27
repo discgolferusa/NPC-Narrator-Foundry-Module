@@ -2068,14 +2068,14 @@ async function openVttImportDialog() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(bundle),
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      ui.notifications.error(body.error || `Import failed (${res.status})`);
+    const { response, data: body } = res;
+    if (!response.ok) {
+      ui.notifications.error(body?.error || `Import failed (${response.status})`);
       return;
     }
 
-    const reviewPath = body.review_url || `/import.html?job=${body.job_id}`;
-    const reviewUrl = `${getEditorBaseUrl()}${reviewPath.startsWith("/") ? "" : "/"}${reviewPath}`;
+    const reviewPath = body?.review_url || `/import.html?job=${body?.job_id}`;
+    const reviewUrl = `${editorBaseUrl()}${reviewPath.startsWith("/") ? "" : "/"}${reviewPath}`;
     ui.notifications.info(
       `NPC Narrator: import job started (${bundle.meta.char_count.toLocaleString()} chars). Finish review in the browser.`
     );
@@ -2084,7 +2084,7 @@ async function openVttImportDialog() {
     } catch {
       /* ignore popup blockers */
     }
-    console.info(`${MODULE_ID} VTT import job`, body.job_id, reviewUrl);
+    console.info(`${MODULE_ID} VTT import job`, body?.job_id, reviewUrl);
   } catch (err) {
     console.error(`${MODULE_ID} VTT import failed`, err);
     ui.notifications.error(`NPC Narrator import failed: ${err?.message || err}`);
