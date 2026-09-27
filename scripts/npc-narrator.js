@@ -26,6 +26,14 @@ import {
   shouldOwnFoundryHub,
   whisperTargets as whisperTargetsPure,
 } from "./narrator-pure.js";
+import {
+  assembleVttWorldBundle,
+  buildFolderChecklist,
+  folderPathFor,
+  isFolderIncluded,
+  plainTextForImport,
+  shouldIncludeActor,
+} from "./vtt-bundle.js";
 
 const MODULE_ID = "npc-narrator";
 const FLAG_SCOPE = MODULE_ID;
@@ -1860,6 +1868,30 @@ async function openBindDialog() {
 }
 
 /**
+ * Configure Settings → Import world — opens the VTT import preflight dialog.
+ */
+class NpcNarratorImportMenu extends FormApplication {
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: "npc-narrator-import-menu",
+      title: "NPC Narrator — Import world",
+      classes: ["npc-narrator-dialog"],
+      template: `modules/${MODULE_ID}/templates/pairing.hbs`,
+      width: 560,
+      height: "auto",
+      closeOnSubmit: true,
+      submitOnChange: false,
+    });
+  }
+
+  /** @override */
+  async render(_force, _options = {}) {
+    await openVttImportDialog();
+    return this;
+  }
+}
+
+/**
  * Configure Settings → Bind / Unbind — opens the pairing-code dialog.
  */
 class NpcNarratorPairingMenu extends FormApplication {
@@ -1883,6 +1915,284 @@ class NpcNarratorPairingMenu extends FormApplication {
   }
 }
 
+/**
+ * Collect world documents (no packs) into a portable VttWorldBundle, then POST /api/vtt/import.
+ */
+async function openVttImportDialog() {
+  if (!game.user.isGM) {
+    ui.notifications.error("Only a GM can import a Foundry world into NPC Narrator.");
+    return;
+  }
+  if (!(await requireBoundSessionForAuthoring())) return;
+
+  const session = getSession();
+  const folders = [...(game.folders?.contents || [])].map((f) => ({
+    id: f.id,
+    name: f.name,
+    folder: f.folder?.id || f.folder || null,
+    type: f.type,
+  }));
+  const folderById = new Map(folders.map((f) => [f.id, f]));
+
+  const journalDocs = [...(game.journal?.contents || [])]
+    .filter((j) => !j.pack)
+    .map((j) => ({ id: j.id, folder: j.folder?.id || j.folder || null, pack: j.pack || null }));
+  const actorDocs = [...(game.actors?.contents || [])]
+    .filter((a) => !a.pack)
+    .map((a) => ({ id: a.id, folder: a.folder?.id || a.folder || null, pack: a.pack || null }));
+
+  const journalFolders = buildFolderChecklist(folders, "JournalEntry", journalDocs);
+  const actorFolders = buildFolderChecklist(folders, "Actor", actorDocs);
+
+  const sceneLinkedJournalIds = new Set();
+  for (const scene of game.scenes?.contents || []) {
+    if (scene.pack) continue;
+    if (scene.journal) sceneLinkedJournalIds.add(String(scene.journal));
+  }
+
+  const actorsOnScene = new Set();
+  for (const scene of game.scenes?.contents || []) {
+    if (scene.pack) continue;
+    for (const t of scene.tokens?.contents || scene.tokens || []) {
+      const actorId = t.actorId || t.actor?.id;
+      if (actorId) actorsOnScene.add(actorId);
+    }
+  }
+
+  const boundLabel = session?.campaignId
+    ? escapeHtml(session.campaignId)
+    : "(none)";
+
+  const folderRows = (list, prefix) =>
+    list
+      .map(
+        (f) => `
+      <label class="npc-narrator-folder-row">
+        <input type="checkbox" name="${prefix}" value="${escapeHtml(f.id)}" data-count="${f.count}" ${
+          f.defaultIncluded ? "checked" : ""
+        } />
+        <span>${escapeHtml(f.name)}</span>
+        <span class="npc-narrator-folder-count">${f.count}</span>
+      </label>`
+      )
+      .join("");
+
+  const sceneCount = [...(game.scenes?.contents || [])].filter((s) => !s.pack).length;
+  const defaultJournalCount = journalFolders
+    .filter((f) => f.defaultIncluded)
+    .reduce((n, f) => n + f.count, 0);
+  const defaultActorCount = actorFolders
+    .filter((f) => f.defaultIncluded)
+    .reduce((n, f) => n + f.count, 0);
+
+  const content = `
+    <div class="npc-narrator-dialog npc-narrator-import">
+      <p>Export <strong>world</strong> journals, actors, and scenes into NPC Narrator.
+      Compendium packs are never included. Uncheck reference/sourcebook folders before continuing.</p>
+      <div class="form-group">
+        <label>Destination</label>
+        <label class="npc-narrator-radio"><input type="radio" name="destination" value="create_new" checked /> Create new Narrator campaign</label>
+        <label class="npc-narrator-radio"><input type="radio" name="destination" value="existing" /> Add to bound campaign (<code>${boundLabel}</code>)</label>
+      </div>
+      <div class="form-group" id="npc-narrator-new-name-group">
+        <label for="npc-narrator-campaign-name">New campaign name</label>
+        <input type="text" id="npc-narrator-campaign-name" name="campaignName" value="${escapeHtml(
+          game.world?.title || game.world?.id || ""
+        )}" style="width:100%" />
+      </div>
+      <div class="form-group">
+        <label>Journal folders</label>
+        <div class="npc-narrator-folder-list">${folderRows(journalFolders, "journalFolder") || "<em>No journals</em>"}</div>
+      </div>
+      <div class="form-group">
+        <label>Actor folders</label>
+        <div class="npc-narrator-folder-list">${folderRows(actorFolders, "actorFolder") || "<em>No actors</em>"}</div>
+      </div>
+      <p class="npc-narrator-status" id="npc-narrator-import-summary">Default selection ≈ ${defaultJournalCount} journals · ${defaultActorCount} actors (plus on-scene) · ${sceneCount} scenes</p>
+    </div>`;
+
+  const result = await dialogWait({
+    title: "NPC Narrator — Import world",
+    content,
+    buttons: [
+      {
+        action: "import",
+        icon: "fas fa-file-import",
+        label: "Start import",
+        default: true,
+        callback: (_event, button) => {
+          const form = button?.form;
+          const root = form || button;
+          const qsa = (sel) => [...(root.querySelectorAll?.(sel) || [])];
+          const destination =
+            (root.querySelector?.('input[name="destination"]:checked') ||
+              form?.elements?.destination)?.value === "existing"
+              ? "existing"
+              : "create_new";
+          const campaignName =
+            root.querySelector?.("#npc-narrator-campaign-name")?.value?.trim() ||
+            form?.elements?.campaignName?.value?.trim() ||
+            "";
+          const journalIncluded = new Set(
+            qsa('input[name="journalFolder"]:checked').map((el) => el.value)
+          );
+          const actorIncluded = new Set(
+            qsa('input[name="actorFolder"]:checked').map((el) => el.value)
+          );
+          return { destination, campaignName, journalIncluded, actorIncluded };
+        },
+      },
+      { action: "cancel", label: "Cancel", icon: "fas fa-times" },
+    ],
+  });
+
+  if (!result || result === "cancel") return;
+
+  const { destination, campaignName, journalIncluded, actorIncluded } = result;
+  ui.notifications.info("NPC Narrator: building world export…");
+
+  try {
+    const bundle = harvestFoundryWorldBundle({
+      destination,
+      campaignName,
+      journalIncluded,
+      actorIncluded,
+      folderById,
+      sceneLinkedJournalIds,
+      actorsOnScene,
+      session,
+    });
+
+    const res = await apiFetch("/api/vtt/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bundle),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      ui.notifications.error(body.error || `Import failed (${res.status})`);
+      return;
+    }
+
+    const reviewPath = body.review_url || `/import.html?job=${body.job_id}`;
+    const reviewUrl = `${getEditorBaseUrl()}${reviewPath.startsWith("/") ? "" : "/"}${reviewPath}`;
+    ui.notifications.info(
+      `NPC Narrator: import job started (${bundle.meta.char_count.toLocaleString()} chars). Finish review in the browser.`
+    );
+    try {
+      window.open(reviewUrl, "_blank", "noopener");
+    } catch {
+      /* ignore popup blockers */
+    }
+    console.info(`${MODULE_ID} VTT import job`, body.job_id, reviewUrl);
+  } catch (err) {
+    console.error(`${MODULE_ID} VTT import failed`, err);
+    ui.notifications.error(`NPC Narrator import failed: ${err?.message || err}`);
+  }
+}
+
+function harvestFoundryWorldBundle({
+  destination,
+  campaignName,
+  journalIncluded,
+  actorIncluded,
+  folderById,
+  sceneLinkedJournalIds,
+  actorsOnScene,
+  session,
+}) {
+  const excluded = [];
+  for (const f of game.folders?.contents || []) {
+    if (f.type === "JournalEntry" && !journalIncluded.has(f.id)) excluded.push(f.id);
+    if (f.type === "Actor" && !actorIncluded.has(f.id)) excluded.push(f.id);
+  }
+
+  const journals = [];
+  for (const entry of game.journal?.contents || []) {
+    if (entry.pack) continue;
+    const folderId = entry.folder?.id || entry.folder || null;
+    const linked = sceneLinkedJournalIds.has(entry.id);
+    const included = linked || isFolderIncluded(folderId, journalIncluded, "JournalEntry");
+    if (!included) continue;
+
+    const pages = [];
+    for (const page of entry.pages?.contents || []) {
+      const html = page.text?.content || "";
+      pages.push({
+        id: page.id,
+        title: page.name || "Page",
+        text: plainTextForImport(html),
+      });
+    }
+    journals.push({
+      id: entry.id,
+      name: entry.name,
+      folderId,
+      folderPath: folderPathFor(folderId, folderById),
+      pages,
+    });
+  }
+
+  const actors = [];
+  for (const actor of game.actors?.contents || []) {
+    if (actor.pack) continue;
+    const folderId = actor.folder?.id || actor.folder || null;
+    const onScene = actorsOnScene.has(actor.id);
+    if (!shouldIncludeActor({ folder: folderId, onScene }, actorIncluded)) continue;
+
+    const sys = actor.system || {};
+    const bioCandidates = [
+      sys.details?.biography?.value,
+      sys.details?.biography?.public,
+      sys.biography?.value,
+      sys.biography?.public,
+      sys.description?.value,
+      typeof sys.details?.biography === "string" ? sys.details.biography : null,
+      typeof sys.biography === "string" ? sys.biography : null,
+      typeof sys.description === "string" ? sys.description : null,
+    ];
+    let biography = "";
+    for (const c of bioCandidates) {
+      biography = plainTextForImport(c);
+      if (biography) break;
+    }
+
+    actors.push({
+      id: actor.id,
+      name: actor.name,
+      folderId,
+      folderPath: folderPathFor(folderId, folderById),
+      type: actor.type || null,
+      biography,
+      onScene,
+    });
+  }
+
+  const scenes = [];
+  for (const scene of game.scenes?.contents || []) {
+    if (scene.pack) continue;
+    scenes.push({
+      id: scene.id,
+      name: scene.name,
+      journalId: scene.journal || null,
+      notes: scene.navName || "",
+    });
+  }
+
+  return assembleVttWorldBundle({
+    worldId: game.world?.id || "",
+    worldLabel: game.world?.title || game.world?.id || "",
+    destination,
+    campaignId: destination === "existing" ? session?.campaignId || null : null,
+    campaignName: destination === "create_new" ? campaignName : null,
+    journals,
+    actors,
+    scenes,
+    excludedFolderIds: excluded,
+  });
+}
+
+
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "editorBaseUrl", {
     name: "Yaml Editor base URL",
@@ -1900,6 +2210,15 @@ Hooks.once("init", () => {
     hint: "Paste a one-time pairing code from the DM console to bind this world (or unbind).",
     icon: "fas fa-link",
     type: NpcNarratorPairingMenu,
+    restricted: true,
+  });
+
+  game.settings.registerMenu(MODULE_ID, "importMenu", {
+    name: "Import world",
+    label: "Import into Narrator…",
+    hint: "Harvest journals, actors, and scenes into an NPC Narrator import job (no compendium packs).",
+    icon: "fas fa-file-import",
+    type: NpcNarratorImportMenu,
     restricted: true,
   });
 
@@ -1974,6 +2293,7 @@ Hooks.once("ready", async () => {
     syncPortrait: syncNarratorPortraitToActor,
     createNpcFromActor: openCreateNarratorNpcFromActor,
     createLocationFromScene: openCreateNarratorLocationFromScene,
+    importWorld: openVttImportDialog,
     chat: () => promptMessageForTargetedNpc("chat"),
     whisper: () => promptMessageForTargetedNpc("whisper"),
     refresh: refreshCatalogs,

@@ -4,6 +4,10 @@ All notable releases of the NPC Narrator Foundry module are published as GitHub 
 
 https://github.com/discgolferusa/NPC-Narrator-Foundry-Module/releases
 
+## Unreleased
+
+- GM **Import world into NPC Narrator** settings menu: harvest world journals/actors/scenes (no packs), folder preflight with reference-folder defaults, create-new or merge-into-bound destination, then `POST /api/vtt/import`.
+
 ## 0.2.9
 
 - Package SignalR client (`lib/signalr.min.js`) into the installable zip (required for pairing under Foundry CSP).
