@@ -225,3 +225,32 @@
   margin-top: 0.75rem;
   opacity: 0.85;
 }
+
+.npc-narrator-folder-list {
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid rgba(128, 128, 128, 0.28);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+}
+
+.npc-narrator-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: normal;
+  margin: 0.2rem 0;
+}
+
+.npc-narrator-folder-count {
+  margin-left: auto;
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+.npc-narrator-radio {
+  display: block;
+  font-weight: normal;
+  margin: 0.25rem 0;
+}
+
